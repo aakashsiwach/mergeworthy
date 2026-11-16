@@ -15,12 +15,12 @@ repositories are the maintainer's own (`aakashsiwach/codeatlas-rag`, `aakashsiwa
 ## Month 1: the core loop on our own repositories
 
 ### T0. Project skeleton
-- [ ] `pyproject.toml` (hatchling, Python ≥ 3.11, `src/mergeworthy`), console script `mergeworthy`.
-- [ ] Dependencies: typer, rich, pydantic>=2, httpx. Dev: pytest, ruff, mypy, respx (HTTP mocking).
-- [ ] `mergeworthy version`.
-- [ ] CI on GitHub Actions: ruff, mypy, pytest on Python 3.11 and 3.12, Ubuntu and Windows. Actions pinned to
+- [x] `pyproject.toml` (hatchling, Python ≥ 3.11, `src/mergeworthy`), console script `mergeworthy`.
+- [x] Dependencies: typer, rich, pydantic>=2, httpx. Dev: pytest, ruff, mypy, respx (HTTP mocking).
+- [x] `mergeworthy version`.
+- [x] CI on GitHub Actions: ruff, mypy, pytest on Python 3.11 and 3.12, Ubuntu and Windows. Actions pinned to
       full commit SHAs, `permissions: contents: read`, `persist-credentials: false`.
-- [ ] `CONTRIBUTING.md` with setup for PowerShell and bash, and `git config core.hooksPath .githooks`.
+- [x] `CONTRIBUTING.md` with setup for PowerShell and bash, and `git config core.hooksPath .githooks`.
 
 **Acceptance:** fresh clone → `pip install -e ".[dev]"` → `mergeworthy version` works; CI green.
 

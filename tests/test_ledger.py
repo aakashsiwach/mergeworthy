@@ -6,9 +6,11 @@ import pytest
 
 from mergeworthy.ledger import (
     ALLOWED_TRANSITIONS,
+    MIGRATIONS,
     SCHEMA_VERSION,
     TERMINAL_STATES,
     AttemptState,
+    Decision,
     InvalidTransition,
     Ledger,
     LedgerError,
@@ -21,7 +23,7 @@ _MAIN = [S.ELIGIBLE, S.WORKING, S.SELF_REVIEWED, S.AWAITING_APPROVAL, S.APPROVED
 _CLAIM = [S.ELIGIBLE, S.CLAIM_DRAFTED, S.CLAIM_APPROVED, S.CLAIMED]
 
 # A path from "discovered" to every non-terminal state, so each allowed edge can be exercised for real.
-PATH_TO: dict[AttemptState, list[AttemptState]] = {S.DISCOVERED: []}
+PATH_TO: dict[AttemptState, list[AttemptState]] = {S.DISCOVERED: [], S.NEEDS_HUMAN: [S.NEEDS_HUMAN]}
 for _path in (_MAIN, _CLAIM):
     for _i, _state in enumerate(_path):
         PATH_TO.setdefault(_state, _path[: _i + 1])
@@ -48,7 +50,8 @@ def advance(ledger: Ledger, attempt_id: int, path: list[AttemptState]) -> None:
 
 def test_diagram_edges() -> None:
     A = {S.ABANDONED}
-    assert ALLOWED_TRANSITIONS[S.DISCOVERED] == {S.ELIGIBLE, S.SKIPPED} | A
+    assert ALLOWED_TRANSITIONS[S.DISCOVERED] == {S.ELIGIBLE, S.SKIPPED, S.NEEDS_HUMAN} | A
+    assert ALLOWED_TRANSITIONS[S.NEEDS_HUMAN] == {S.ELIGIBLE, S.SKIPPED} | A
     assert ALLOWED_TRANSITIONS[S.ELIGIBLE] == {S.CLAIM_DRAFTED, S.WORKING, S.SKIPPED} | A
     assert ALLOWED_TRANSITIONS[S.CLAIM_DRAFTED] == {S.CLAIM_APPROVED, S.HUMAN_REJECTED} | A
     assert ALLOWED_TRANSITIONS[S.CLAIM_APPROVED] == {S.CLAIMED, S.DECLINED} | A
@@ -103,6 +106,8 @@ def test_every_allowed_transition(ledger: Ledger, source: AttemptState, target: 
         (PATH_TO[S.APPROVED], S.CLOSED),  # not submitted yet
         (PATH_TO[S.ELIGIBLE], S.HUMAN_REJECTED),
         ([S.SKIPPED], S.ELIGIBLE),  # terminal
+        ([S.NEEDS_HUMAN], S.WORKING),  # a human must decide first
+        (PATH_TO[S.ELIGIBLE], S.NEEDS_HUMAN),
         (PATH_TO[S.ELIGIBLE], S.ELIGIBLE),  # no self loops
     ],
 )
@@ -191,3 +196,52 @@ def test_newer_schema_is_refused(tmp_path: Path) -> None:
     with pytest.raises(LedgerError, match="newer"):
         migrate(conn)
     conn.close()
+
+
+def test_decisions_are_tied_to_content_hash(ledger: Ledger) -> None:
+    asked = ledger.request_decision("o/r", "ai_policy", "hash1", "mentions AI")
+    assert asked.decision is None
+    assert ledger.request_decision("o/r", "ai_policy", "hash1", "again").id == asked.id
+    assert ledger.find_decision("o/r", "ai_policy", "hash1") is None
+    assert [d.id for d in ledger.pending_decisions()] == [asked.id]
+
+    done = ledger.decide("O/R", "ai_policy", Decision.ALLOW, "read it; AI help is fine")
+    assert done.decision is Decision.ALLOW
+    found = ledger.find_decision("o/r", "ai_policy", "hash1")
+    assert found is not None
+    assert found.reason == "read it; AI help is fine"
+    assert ledger.pending_decisions() == []
+    # Changed policy files: the old decision does not apply.
+    assert ledger.find_decision("o/r", "ai_policy", "hash2") is None
+
+
+def test_decide_requires_open_question_and_reason(ledger: Ledger) -> None:
+    with pytest.raises(LedgerError, match="no open question"):
+        ledger.decide("o/r", "ai_policy", Decision.DENY, "no")
+    ledger.request_decision("o/r", "ai_policy", "h", "q")
+    with pytest.raises(LedgerError, match="reason"):
+        ledger.decide("o/r", "ai_policy", Decision.DENY, " ")
+
+
+def test_attempts_for_subject(ledger: Ledger) -> None:
+    a = new_attempt(ledger, 1)
+    b = new_attempt(ledger, 2)
+    ledger.transition(a, S.NEEDS_HUMAN, "unclear")
+    ledger.transition(b, S.NEEDS_HUMAN, "unclear")
+    assert [x.id for x in ledger.attempts_for_subject("owner/repo", S.NEEDS_HUMAN)] == [a, b]
+    assert [x.id for x in ledger.attempts_for_subject("owner/repo#2", S.NEEDS_HUMAN)] == [b]
+    assert ledger.attempts_for_subject("other/repo", S.NEEDS_HUMAN) == []
+
+
+def test_migration_from_version_1_keeps_data(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(path)
+    MIGRATIONS[0](conn)
+    conn.execute("PRAGMA user_version = 1")
+    conn.execute("INSERT INTO repositories (full_name, created_at, updated_at) VALUES ('a/b', 'now', 'now')")
+    conn.commit()
+    conn.close()
+    with Ledger(path) as led:
+        assert led.schema_version == SCHEMA_VERSION
+        assert led.get_repository("a/b") is not None
+        assert led.pending_decisions() == []

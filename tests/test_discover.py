@@ -7,9 +7,10 @@ from typer.testing import CliRunner
 
 from mergeworthy import cli
 from mergeworthy.config import Config, parse_config
-from mergeworthy.discover import check_and_record, discover, parse_target
+from mergeworthy.discover import check_and_record, discover, parse_target, record_decision
+from mergeworthy.eligibility import Status
 from mergeworthy.github import LinkedPullRequest
-from mergeworthy.ledger import AttemptState, Ledger
+from mergeworthy.ledger import AttemptState, Decision, Ledger
 
 
 @pytest.fixture
@@ -125,16 +126,73 @@ def test_check_ineligible_issue_is_skipped_with_reason(ledger: Ledger, target: s
     assert not last.reason.startswith("needs human")
 
 
-def test_check_unclear_policy_is_skipped_and_flagged(ledger: Ledger) -> None:
+def test_check_unclear_policy_waits_for_a_human(ledger: Ledger) -> None:
     gh = github_with_issues()
     outcome = check_and_record(gh, ledger, Config(), "unclear/repo#1", now=NOW)
     assert outcome.needs_human
-    assert outcome.attempt_state is AttemptState.SKIPPED
-    assert outcome.attempt_id is not None
-    assert ledger.transitions(outcome.attempt_id)[-1].reason.startswith("needs human decision")
+    assert outcome.attempt_state is AttemptState.NEEDS_HUMAN
     repo = ledger.get_repository("unclear/repo")
     assert repo is not None
     assert repo["policy_check"]["needs_human"] is True
+    [question] = ledger.pending_decisions()
+    assert (question.subject, question.check_name) == ("unclear/repo", "ai_policy")
+
+    # Checking again without a decision changes nothing and asks nothing new.
+    again = check_and_record(gh, ledger, Config(), "unclear/repo#1", now=NOW)
+    assert again.attempt_state is AttemptState.NEEDS_HUMAN
+    assert len(ledger.pending_decisions()) == 1
+
+
+def test_allow_decision_is_reused_until_policy_changes(ledger: Ledger) -> None:
+    gh = github_with_issues()
+    first = check_and_record(gh, ledger, Config(), "unclear/repo#1", now=NOW)
+    record_decision(ledger, "unclear/repo", "ai_policy", Decision.ALLOW, "LLM note is harmless")
+
+    after = check_and_record(gh, ledger, Config(), "unclear/repo#1", now=NOW)
+    assert after.eligible
+    assert after.attempt_id == first.attempt_id
+    assert after.attempt_state is AttemptState.ELIGIBLE
+    result = after.repository.get("ai_policy")
+    assert result is not None
+    assert result.status is Status.PASS
+    assert "a human allowed this" in result.reason
+
+    # The policy files change: the old decision no longer applies and a new question is asked.
+    gh.repos["unclear/repo"].files["docs/CONTRIBUTING.md"] += "\nWe are thinking about AI tools.\n"
+    changed = check_and_record(gh, ledger, Config(), "unclear/repo", now=NOW)
+    assert changed.needs_human
+    assert len(ledger.pending_decisions()) == 1
+
+
+def test_deny_decision_skips_waiting_attempts(ledger: Ledger) -> None:
+    gh = github_with_issues()
+    first = check_and_record(gh, ledger, Config(), "unclear/repo#1", now=NOW)
+    outcome = record_decision(ledger, "unclear/repo", "ai_policy", Decision.DENY, "reads as a refusal")
+    assert outcome.skipped_attempts == [first.attempt_id]
+    assert first.attempt_id is not None
+    assert ledger.get_attempt(first.attempt_id).state is AttemptState.SKIPPED
+
+    later = check_and_record(gh, ledger, Config(), "unclear/repo", now=NOW)
+    assert later.blocked
+    assert not later.needs_human
+
+
+def test_hard_failure_wins_over_unclear(ledger: Ledger) -> None:
+    gh = github_with_issues()
+    gh.repos["unclear/repo"].issues[1] = make_issue("unclear/repo", 1, assignees=["someone"])
+    outcome = check_and_record(gh, ledger, Config(), "unclear/repo#1", now=NOW)
+    assert outcome.blocked
+    assert outcome.attempt_state is AttemptState.SKIPPED
+
+
+def test_vague_issue_waits_for_a_human(ledger: Ledger) -> None:
+    gh = github_with_issues()
+    body = "It would be nice to have a nicer way of handling configuration in the main module overall."
+    gh.repos["good/repo"].issues[1] = make_issue("good/repo", 1, body=body)
+    outcome = check_and_record(gh, ledger, Config(), "good/repo#1", now=NOW)
+    assert outcome.attempt_state is AttemptState.NEEDS_HUMAN
+    record_decision(ledger, "good/repo#1", "specific", Decision.ALLOW, "clear enough")
+    assert check_and_record(gh, ledger, Config(), "good/repo#1", now=NOW).eligible
 
 
 def test_check_repository_only_records_no_attempt(ledger: Ledger) -> None:
@@ -206,3 +264,30 @@ def test_cli_refuses_config_with_secret(tmp_path: Path) -> None:
 
 def test_safe_strips_terminal_escapes() -> None:
     assert cli.safe("title\x1b[31m red\x07").plain == "title red"
+
+
+def test_cli_decide_lists_and_answers(cli_env: Path) -> None:
+    runner.invoke(cli.app, ["check", "unclear/repo#1", "-c", str(cli_env)])
+    listed = runner.invoke(cli.app, ["decide", "-c", str(cli_env)])
+    assert listed.exit_code == 0, listed.output
+    assert "unclear/repo" in listed.output
+    assert "1 open questions" in listed.output
+
+    no_reason = runner.invoke(cli.app, ["decide", "unclear/repo", "ai_policy", "--allow", "-c", str(cli_env)])
+    assert no_reason.exit_code == 2
+    both = runner.invoke(
+        cli.app, ["decide", "unclear/repo", "ai_policy", "--allow", "--deny", "-r", "x", "-c", str(cli_env)]
+    )
+    assert both.exit_code == 2
+
+    done = runner.invoke(
+        cli.app,
+        ["decide", "unclear/repo", "ai_policy", "--deny", "-r", "unclear wording", "-c", str(cli_env)],
+    )
+    assert done.exit_code == 0, done.output
+    assert "skipped attempts: 1" in done.output
+    unknown = runner.invoke(
+        cli.app, ["decide", "unclear/repo", "ai_policy", "--deny", "-r", "again", "-c", str(cli_env)]
+    )
+    assert unknown.exit_code == 1
+    assert "no open question" in unknown.output

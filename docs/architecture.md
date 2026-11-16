@@ -9,6 +9,8 @@ Every issue mergeworthy considers becomes an **attempt** that moves through thes
 recorded in the ledger with a timestamp and a reason.
 
 ```text
+discovered ─▶ needs_human ─▶ eligible | skipped
+     │
 discovered ─▶ eligible ─▶ (claim_drafted ─▶ claim_approved ─▶ claimed) ─▶ working ─▶ self_reviewed
      │            │              │                │               │            │            │
      ▼            ▼              ▼                ▼               ▼            ▼            ▼
@@ -21,6 +23,8 @@ self_reviewed ─▶ awaiting_approval ─▶ approved ─▶ submitted ─▶ i
 
 any state that is not terminal ─▶ abandoned
 ```
+
+`needs_human` is not terminal: it waits for `mergeworthy decide` and the next `mergeworthy check`.
 
 Terminal states: `skipped`, `failed`, `rejected`, `human_rejected`, `declined`, `merged`, `closed`, `abandoned`.
 
@@ -121,12 +125,14 @@ would a maintainer be likely to merge it. Any "no" rejects the attempt with the 
 | `transitions` | attempt, from, to, reason, timestamp |
 | `pull_requests` | attempt, url, state, CI status, merged at, closed at, maintainer outcome notes |
 | `limits_log` | changes to limits, with reason |
+| `human_decisions` | subject (repository or issue), check, content hash, question, allow or deny, reason |
 
 ## CLI
 
 ```text
 mergeworthy discover [--language java|python] [--limit N]    find and record candidate issues
 mergeworthy check REPO_OR_ISSUE                              run eligibility checks and print reasons
+mergeworthy decide [SUBJECT CHECK --allow|--deny -r REASON]  list or answer questions for a human
 mergeworthy work ISSUE_URL [--dry-run]                       run one attempt end to end up to approval
 mergeworthy review                                           approve or reject waiting attempts
 mergeworthy submit ATTEMPT_ID                                submit an approved attempt
@@ -138,9 +144,15 @@ mergeworthy replay [--split dev|test] [--final]              run the replay benc
 `--dry-run` is the default for anything that would write to GitHub until it is explicitly configured off.
 
 `discover` and `check` only read from GitHub. `discover` stores candidates and opens one attempt per new issue in
-`discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible` or
-`skipped`; a skip that needs a human decision has a reason starting with `needs human decision`. `check` exits
+`discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible`, `needs_human` or
+`skipped` (a check that fails outright wins over one that is unclear). `check` exits
 with 0 (eligible), 1 (not eligible or error), 2 (configuration error) or 3 (a human must decide).
+
+**Human decisions.** An unclear check (AI policy wording, an issue that may not be specific enough, an
+uncertain linked pull request) becomes an open question in `human_decisions`, tied to a SHA-256 hash of the
+content it was about: for the AI policy, the repository's policy files. `mergeworthy decide` answers it with
+a required reason. The answer is reused by every later `check` while the hash is unchanged; when the content
+changes, the question is asked again. A denial moves waiting attempts to `skipped`.
 
 The AI policy check matches the phrases in `src/mergeworthy/data/ai_policy_phrases.toml`: any forbidding phrase
 skips the repository, an explicit permission passes, any other mention of AI is unclear and goes to a human.

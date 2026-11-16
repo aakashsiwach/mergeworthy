@@ -20,6 +20,7 @@ from typing import Any, Self
 
 class AttemptState(StrEnum):
     DISCOVERED = "discovered"
+    NEEDS_HUMAN = "needs_human"
     ELIGIBLE = "eligible"
     SKIPPED = "skipped"
     CLAIM_DRAFTED = "claim_drafted"
@@ -48,7 +49,8 @@ TERMINAL_STATES = frozenset(
 
 # Edges of the diagram in docs/architecture.md, and nothing else.
 _EDGES: dict[AttemptState, set[AttemptState]] = {
-    S.DISCOVERED: {S.ELIGIBLE, S.SKIPPED},
+    S.DISCOVERED: {S.ELIGIBLE, S.SKIPPED, S.NEEDS_HUMAN},
+    S.NEEDS_HUMAN: {S.ELIGIBLE, S.SKIPPED},
     S.ELIGIBLE: {S.CLAIM_DRAFTED, S.WORKING, S.SKIPPED},
     S.CLAIM_DRAFTED: {S.CLAIM_APPROVED, S.HUMAN_REJECTED},
     S.CLAIM_APPROVED: {S.CLAIMED, S.DECLINED},
@@ -180,8 +182,29 @@ def _migration_1(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_2(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        -- A question for a human (decision NULL) or the human's answer. The content hash identifies what the
+        -- question was about, e.g. the repository's policy files; a changed hash means asking again.
+        CREATE TABLE human_decisions (
+            id            INTEGER PRIMARY KEY,
+            subject       TEXT NOT NULL COLLATE NOCASE,   -- owner/repo or owner/repo#number
+            check_name    TEXT NOT NULL,
+            content_hash  TEXT NOT NULL,
+            question      TEXT NOT NULL,
+            decision      TEXT CHECK (decision IN ('allow', 'deny')),
+            reason        TEXT,
+            requested_at  TEXT NOT NULL,
+            decided_at    TEXT,
+            UNIQUE (subject, check_name, content_hash)
+        );
+        """
+    )
+
+
 # Append new migrations; never edit or reorder an existing one.
-MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (_migration_1,)
+MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (_migration_1, _migration_2)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -208,6 +231,24 @@ class Attempt:
     spend_usd: float
     created_at: str
     updated_at: str
+
+
+class Decision(StrEnum):
+    ALLOW = "allow"
+    DENY = "deny"
+
+
+@dataclass(frozen=True)
+class DecisionRecord:
+    id: int
+    subject: str
+    check_name: str
+    content_hash: str
+    question: str
+    decision: Decision | None
+    reason: str | None
+    requested_at: str
+    decided_at: str | None
 
 
 @dataclass(frozen=True)
@@ -412,6 +453,87 @@ class Ledger:
             )
             for r in rows
         ]
+
+    # human decisions
+
+    def request_decision(
+        self, subject: str, check_name: str, content_hash: str, question: str
+    ) -> DecisionRecord:
+        """Record a question for a human, unless the same question (same content hash) already exists."""
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO human_decisions"
+                " (subject, check_name, content_hash, question, requested_at) VALUES (?, ?, ?, ?, ?)",
+                (subject, check_name, content_hash, question, _now()),
+            )
+        record = self._decision_row(subject, check_name, content_hash)
+        assert record is not None
+        return record
+
+    def find_decision(self, subject: str, check_name: str, content_hash: str) -> DecisionRecord | None:
+        """The human's answer for exactly this content, or None if there is none yet."""
+        record = self._decision_row(subject, check_name, content_hash)
+        return record if record is not None and record.decision is not None else None
+
+    def decide(self, subject: str, check_name: str, decision: Decision, reason: str) -> DecisionRecord:
+        """Answer the newest open question for ``subject`` and ``check_name``."""
+        if not reason.strip():
+            raise LedgerError("a reason is required for every decision")
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT id FROM human_decisions WHERE subject = ? AND check_name = ? AND decision IS NULL"
+                " ORDER BY id DESC LIMIT 1",
+                (subject, check_name),
+            ).fetchone()
+            if row is None:
+                raise LedgerError(f"no open question for {subject} {check_name}")
+            conn.execute(
+                "UPDATE human_decisions SET decision = ?, reason = ?, decided_at = ? WHERE id = ?",
+                (decision.value, reason, _now(), row["id"]),
+            )
+            done = conn.execute("SELECT * FROM human_decisions WHERE id = ?", (row["id"],)).fetchone()
+        return self._decision(done)
+
+    def pending_decisions(self) -> list[DecisionRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM human_decisions WHERE decision IS NULL ORDER BY id"
+        ).fetchall()
+        return [self._decision(row) for row in rows]
+
+    def attempts_for_subject(self, subject: str, state: AttemptState) -> list[Attempt]:
+        """Attempts in ``state`` for a repository (``owner/repo``) or one issue (``owner/repo#n``)."""
+        name, _, number = subject.partition("#")
+        query = (
+            "SELECT a.* FROM attempts a JOIN issues i ON i.id = a.issue_id"
+            " JOIN repositories r ON r.id = i.repository_id WHERE r.full_name = ? AND a.state = ?"
+        )
+        params: list[Any] = [name, state.value]
+        if number:
+            query += " AND i.number = ?"
+            params.append(int(number))
+        rows = self._conn.execute(query + " ORDER BY a.id", params).fetchall()
+        return [self._attempt(row) for row in rows]
+
+    def _decision_row(self, subject: str, check_name: str, content_hash: str) -> DecisionRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM human_decisions WHERE subject = ? AND check_name = ? AND content_hash = ?",
+            (subject, check_name, content_hash),
+        ).fetchone()
+        return None if row is None else self._decision(row)
+
+    @staticmethod
+    def _decision(row: sqlite3.Row) -> DecisionRecord:
+        return DecisionRecord(
+            id=int(row["id"]),
+            subject=row["subject"],
+            check_name=row["check_name"],
+            content_hash=row["content_hash"],
+            question=row["question"],
+            decision=Decision(row["decision"]) if row["decision"] else None,
+            reason=row["reason"],
+            requested_at=row["requested_at"],
+            decided_at=row["decided_at"],
+        )
 
     # limits
 

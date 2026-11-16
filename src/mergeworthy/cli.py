@@ -16,10 +16,16 @@ from rich.text import Text
 
 from mergeworthy import __version__
 from mergeworthy.config import Config, ConfigError, load_config, load_secrets
-from mergeworthy.discover import CheckOutcome, DiscoveryReader, check_and_record, discover
+from mergeworthy.discover import (
+    CheckOutcome,
+    DiscoveryReader,
+    check_and_record,
+    discover,
+    record_decision,
+)
 from mergeworthy.eligibility import Report, Status
 from mergeworthy.github import GitHubClient, GitHubError
-from mergeworthy.ledger import Ledger
+from mergeworthy.ledger import Decision, Ledger, LedgerError
 
 app = typer.Typer(
     name="mergeworthy",
@@ -152,3 +158,45 @@ def check_command(
         raise typer.Exit(3)
     console.print("not eligible", style="red")
     raise typer.Exit(1)
+
+
+@app.command(name="decide")
+def decide_command(
+    subject: Annotated[
+        str | None, typer.Argument(help="owner/repo or owner/repo#N; omit to list open questions.")
+    ] = None,
+    check: Annotated[str | None, typer.Argument(help="The check to decide, e.g. ai_policy.")] = None,
+    allow: Annotated[bool, typer.Option("--allow", help="Allow: treat the check as passed.")] = False,
+    deny: Annotated[bool, typer.Option("--deny", help="Deny: treat the check as failed.")] = False,
+    reason: Annotated[str, typer.Option("--reason", "-r", help="Why; required.")] = "",
+    config_path: ConfigOption = None,
+) -> None:
+    """List or answer questions that need a human decision.
+
+    A decision applies only to the content it was based on (for example the repository's policy files). If
+    that content changes, the question is asked again.
+    """
+    config = _load(config_path)
+    with Ledger(config.ledger_path) as ledger:
+        if subject is None:
+            pending = ledger.pending_decisions()
+            table = Table("subject", "check", "question", "asked")
+            for item in pending:
+                table.add_row(safe(item.subject), item.check_name, safe(item.question), item.requested_at)
+            console.print(table)
+            console.print(f"{len(pending)} open questions.")
+            return
+        if check is None or allow == deny or not reason.strip():
+            console.print("give SUBJECT CHECK, exactly one of --allow or --deny, and --reason", style="red")
+            raise typer.Exit(2)
+        decision = Decision.ALLOW if allow else Decision.DENY
+        try:
+            outcome = record_decision(ledger, subject, check, decision, reason)
+        except (ValueError, LedgerError) as exc:
+            console.print(safe(f"error: {exc}"), style="red")
+            raise typer.Exit(1) from exc
+    console.print(safe(f"recorded: {decision.value} {outcome.record.subject} {check}"))
+    if outcome.skipped_attempts:
+        console.print(f"skipped attempts: {', '.join(map(str, outcome.skipped_attempts))}")
+    if decision is Decision.ALLOW:
+        console.print(safe(f"run `mergeworthy check {outcome.record.subject}` to re-evaluate."))

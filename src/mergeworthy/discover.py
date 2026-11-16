@@ -11,9 +11,17 @@ from datetime import datetime
 from typing import Protocol
 
 from mergeworthy.config import Config
-from mergeworthy.eligibility import GitHubReader, Report, check_issue, check_repository
+from mergeworthy.eligibility import (
+    DecisionLookup,
+    GitHubReader,
+    Report,
+    Status,
+    apply_decisions,
+    check_issue,
+    check_repository,
+)
 from mergeworthy.github import Issue
-from mergeworthy.ledger import AttemptState, Ledger
+from mergeworthy.ledger import AttemptState, Decision, DecisionRecord, Ledger
 
 
 class DiscoveryReader(GitHubReader, Protocol):
@@ -110,16 +118,56 @@ class CheckOutcome:
     attempt_state: AttemptState | None
 
     @property
+    def reports(self) -> list[Report]:
+        return [self.repository] + ([self.issue] if self.issue is not None else [])
+
+    @property
     def eligible(self) -> bool:
-        return self.repository.eligible and (self.issue is None or self.issue.eligible)
+        return all(r.eligible for r in self.reports)
+
+    @property
+    def blocked(self) -> bool:
+        return any(r.blocked for r in self.reports)
 
     @property
     def needs_human(self) -> bool:
-        return self.repository.needs_human or (self.issue is not None and self.issue.needs_human)
+        """Nothing failed outright, but a human must decide at least one check."""
+        return not self.blocked and not self.eligible
 
 
 def _parse_time(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
+
+
+def _lookup(ledger: Ledger) -> DecisionLookup:
+    def lookup(subject: str, check_name: str, digest: str) -> tuple[str, str] | None:
+        found = ledger.find_decision(subject, check_name, digest)
+        if found is None or found.decision is None:
+            return None
+        return found.decision.value, found.reason or ""
+
+    return lookup
+
+
+def _request_decisions(ledger: Ledger, report: Report) -> None:
+    for result in report.results:
+        digest = result.details.get("content_hash")
+        if result.status is Status.UNCLEAR and isinstance(digest, str):
+            ledger.request_decision(report.subject, result.name, digest, result.reason)
+
+
+def _next_state(outcome: CheckOutcome) -> AttemptState:
+    if outcome.eligible:
+        return AttemptState.ELIGIBLE
+    if outcome.needs_human:
+        return AttemptState.NEEDS_HUMAN
+    return AttemptState.SKIPPED
+
+
+def _reasons(outcome: CheckOutcome) -> str:
+    if outcome.eligible:
+        return "all eligibility checks passed"
+    return "; ".join(f"{r.name}: {r.reason}" for report in outcome.reports for r in report.failures)
 
 
 def check_and_record(
@@ -130,14 +178,16 @@ def check_and_record(
     *,
     now: datetime,
 ) -> CheckOutcome:
-    """Run eligibility checks and record the results.
+    """Run eligibility checks, apply stored human decisions and record the results.
 
-    For an issue, the issue's attempt moves from ``discovered`` to ``eligible`` or ``skipped``. Attempts in
+    Unclear checks without a decision for the same content become open questions for a human. For an
+    issue, an attempt in ``discovered`` moves to ``eligible``, ``needs_human`` or ``skipped``; an attempt
+    in ``needs_human`` moves to ``eligible`` or ``skipped`` once the questions are answered. Attempts in
     any other state are left alone.
     """
     full_name, number = parse_target(target)
     record = ledger.get_repository(full_name)
-    repo, _documents, repo_report = check_repository(
+    repo, _documents, raw_repo_report = check_repository(
         gh,
         config,
         full_name,
@@ -145,6 +195,8 @@ def check_and_record(
         ledger_denied=bool(record and record["deny_listed"]),
         cooldown_until=_parse_time(record["cooldown_until"]) if record else None,
     )
+    repo_report = apply_decisions(raw_repo_report, _lookup(ledger))
+    _request_decisions(ledger, repo_report)
     by_name = {r.name: r.to_dict() for r in repo_report.results}
     activity = {k: by_name[k] for k in ("recent_commit", "outside_merge", "tests_in_sandbox")}
     policy: dict[str, object] = {
@@ -163,10 +215,11 @@ def check_and_record(
         return CheckOutcome(repo_report, None, None, None)
 
     issue = gh.get_issue(repo.full_name, number)
-    issue_report = check_issue(gh, config, issue, now=now)
+    issue_report = apply_decisions(check_issue(gh, config, issue, now=now), _lookup(ledger))
+    _request_decisions(ledger, issue_report)
     issue_id = ledger.upsert_issue(repo_id, issue.number, issue.title, issue.labels, issue.html_url)
-    eligible = repo_report.eligible and issue_report.eligible
-    ledger.set_issue_eligibility(issue_id, eligible, repo_report.to_dicts() + issue_report.to_dicts())
+    outcome = CheckOutcome(repo_report, issue_report, None, None)
+    ledger.set_issue_eligibility(issue_id, outcome.eligible, repo_report.to_dicts() + issue_report.to_dicts())
 
     attempts = ledger.attempts_for_issue(issue_id)
     if attempts:
@@ -174,13 +227,32 @@ def check_and_record(
     else:
         attempt = ledger.get_attempt(ledger.create_attempt(issue_id, "checked by request"))
     state = attempt.state
-    if state is AttemptState.DISCOVERED:
-        if eligible:
-            reason = "all eligibility checks passed"
-            state = ledger.transition(attempt.id, AttemptState.ELIGIBLE, reason).state
-        else:
-            reasons = "; ".join(f"{r.name}: {r.reason}" for r in repo_report.failures + issue_report.failures)
-            needs_human = repo_report.needs_human or issue_report.needs_human
-            reason = ("needs human decision: " if needs_human else "") + reasons
-            state = ledger.transition(attempt.id, AttemptState.SKIPPED, reason).state
+    target_state = _next_state(outcome)
+    movable = state is AttemptState.DISCOVERED or (
+        state is AttemptState.NEEDS_HUMAN and target_state is not AttemptState.NEEDS_HUMAN
+    )
+    if movable:
+        state = ledger.transition(attempt.id, target_state, _reasons(outcome)).state
     return CheckOutcome(repo_report, issue_report, attempt.id, state)
+
+
+@dataclass(frozen=True)
+class DecisionOutcome:
+    record: DecisionRecord
+    skipped_attempts: list[int]
+
+
+def record_decision(
+    ledger: Ledger, subject: str, check_name: str, decision: Decision, reason: str
+) -> DecisionOutcome:
+    """Answer an open question. A denial skips the waiting attempts it covers; an approval takes effect on the
+    next ``check``, which re-runs every other check first."""
+    full_name, number = parse_target(subject)
+    normalised = full_name if number is None else f"{full_name}#{number}"
+    record = ledger.decide(normalised, check_name, decision, reason)
+    skipped = []
+    if decision is Decision.DENY:
+        for attempt in ledger.attempts_for_subject(normalised, AttemptState.NEEDS_HUMAN):
+            ledger.transition(attempt.id, AttemptState.SKIPPED, f"a human denied {check_name}: {reason}")
+            skipped.append(attempt.id)
+    return DecisionOutcome(record, skipped)

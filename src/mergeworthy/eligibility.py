@@ -7,6 +7,7 @@ later (in the sandbox) and does not block at this stage.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -50,6 +51,14 @@ class GitHubReader(Protocol):
     def list_linked_pull_requests(self, full_name: str, number: int) -> list[LinkedPullRequest]: ...
 
 
+def content_hash(parts: Iterable[tuple[str, str]]) -> str:
+    """A stable SHA-256 over (name, text) pairs, used to tie a human decision to what it was based on."""
+    digest = hashlib.sha256()
+    for name, text in sorted(parts):
+        digest.update(name.encode("utf-8") + b"\0" + text.encode("utf-8") + b"\0")
+    return digest.hexdigest()
+
+
 class Status(StrEnum):
     PASS = "pass"
     FAIL = "fail"
@@ -87,8 +96,14 @@ class Report:
         return all(r.passed for r in self.results)
 
     @property
+    def blocked(self) -> bool:
+        """At least one check failed outright; a human decision would not change the outcome."""
+        return any(r.status is Status.FAIL for r in self.results)
+
+    @property
     def needs_human(self) -> bool:
-        return any(r.status is Status.UNCLEAR for r in self.results)
+        """Nothing failed outright, but at least one check needs a human decision."""
+        return not self.blocked and any(r.status is Status.UNCLEAR for r in self.results)
 
     @property
     def failures(self) -> list[CheckResult]:
@@ -144,6 +159,9 @@ class PolicyDocuments:
             **self.pull_request_templates,
             **self.ai_policies,
         }
+
+    def content_hash(self) -> str:
+        return content_hash(self.all().items())
 
 
 def _kind(entry: DirectoryEntry) -> str | None:
@@ -290,6 +308,7 @@ def check_ai_policy(documents: PolicyDocuments) -> CheckResult:
         "verdict": result.verdict.value,
         "sources": result.sources,
         "matches": [{"source": m.source, "quote": m.quote, "rule": m.note} for m in result.matches],
+        "content_hash": documents.content_hash(),
     }
     first = result.matches[0] if result.matches else None
     if result.verdict is PolicyVerdict.FORBIDS and first:
@@ -447,6 +466,7 @@ def check_specific(issue: Issue) -> CheckResult:
         "specific",
         Status.UNCLEAR,
         "no reproduction steps or concrete change found; a human must decide",
+        {"content_hash": content_hash([("title", issue.title), ("body", issue.body)])},
     )
 
 
@@ -460,3 +480,31 @@ def check_issue(gh: GitHubReader, config: Config, issue: Issue, *, now: datetime
         lambda: check_specific(issue),
     ]
     return Report(f"{issue.repository}#{issue.number}", [check() for check in checks])
+
+
+# --- human decisions --------------------------------------------------------------------------------------
+
+
+# (subject, check name, content hash) -> (decision "allow" or "deny", reason), or None if not decided.
+DecisionLookup = Callable[[str, str, str], tuple[str, str] | None]
+
+
+def apply_decisions(report: Report, lookup: DecisionLookup) -> Report:
+    """Replace unclear results with the human's decision for the same content, where one exists."""
+    results = []
+    for result in report.results:
+        digest = result.details.get("content_hash")
+        if result.status is Status.UNCLEAR and isinstance(digest, str):
+            found = lookup(report.subject, result.name, digest)
+            if found is not None:
+                decision, reason = found
+                status = Status.PASS if decision == "allow" else Status.FAIL
+                verb = "allowed" if decision == "allow" else "denied"
+                result = CheckResult(
+                    result.name,
+                    status,
+                    f"a human {verb} this: {reason}",
+                    {**result.details, "human": decision},
+                )
+        results.append(result)
+    return Report(report.subject, results)

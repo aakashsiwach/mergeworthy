@@ -41,6 +41,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["SIM300"]  # flags comparisons with upper-case constants as Yoda conditions
 
 [tool.mypy]
 python_version = "3.11"

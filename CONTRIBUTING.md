@@ -34,6 +34,13 @@ mergeworthy version
 `git config core.hooksPath .githooks` enables the repository's `commit-msg` hook, which removes AI attribution
 lines so commits carry only the author's identity. Run it once per clone.
 
+## Configuration
+
+Copy `mergeworthy.example.toml` to `mergeworthy.toml` (ignored by git) and adjust it. Every field is
+documented in the example. Without a file, safe defaults apply: dry-run on and an empty allowlist. Secrets
+are read only from the `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` environment variables; a configuration file
+containing anything that looks like a secret is refused.
+
 ## Checks
 
 A change is ready only when all of these pass:

@@ -1,0 +1,60 @@
+# mergeworthy configuration. Copy to mergeworthy.toml and adjust.
+#
+# Secrets never go in this file. mergeworthy refuses to start if it finds anything that looks like a token or
+# key here. Set them as environment variables instead:
+#   GITHUB_TOKEN        GitHub token, used only by submission after human approval
+#   ANTHROPIC_API_KEY   model API key, used only by the coding agent process
+#
+# Every value below is the default. A missing file means these defaults. Unknown keys are an error.
+
+# When true, nothing is written to GitHub: forks, pushes, comments and pull requests are printed instead.
+# Keep it true until you have read docs/policy.md and filled in the allowlist.
+dry_run = true
+
+# Languages in scope (stage 1 supports "java" and "python").
+languages = ["java", "python"]
+
+# Issue labels that mean the maintainers want outside help. Issues need at least one of them.
+labels = ["good first issue", "help wanted"]
+
+# Repositories ("owner/name") that mergeworthy may write to. Empty means it writes nowhere, even with
+# dry_run = false.
+allowlist = []
+
+# Repositories ("owner/name") that mergeworthy never considers again, for example after a maintainer said AI
+# contributions are unwelcome. Wins over the allowlist.
+deny_list = []
+
+# SQLite ledger file, relative to the current directory.
+ledger_path = "mergeworthy.sqlite3"
+
+# docs/policy.md section 3. Raising a limit is a deliberate change and is recorded in the ledger.
+[limits]
+# Pull requests submitted per week, across all repositories.
+prs_per_week = 3
+# Open pull requests per repository at a time.
+open_prs_per_repository = 1
+# Attempts per issue.
+attempts_per_issue = 1
+# Days to stay away from a repository after a pull request is closed without merging.
+cooldown_days_after_close = 60
+# Maximum lines changed in a diff, excluding tests.
+max_diff_lines = 200
+
+# docs/policy.md sections 1 and 2.
+[eligibility]
+# A commit to the default branch within this many days.
+max_days_since_commit = 30
+# A pull request from an outside contributor merged within this many days.
+max_days_since_outside_merge = 90
+# The test suite must run in the sandbox within this many minutes.
+max_test_minutes = 15
+# A "working on it" comment newer than this many days blocks the issue.
+claim_comment_days = 30
+
+# Hard caps for each attempt.
+[budget]
+# Model spend in US dollars.
+max_spend_usd_per_attempt = 2.0
+# Wall-clock time in minutes.
+max_minutes_per_attempt = 30

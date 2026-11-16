@@ -25,12 +25,12 @@ repositories are the maintainer's own (`aakashsiwach/codeatlas-rag`, `aakashsiwa
 **Acceptance:** fresh clone → `pip install -e ".[dev]"` → `mergeworthy version` works; CI green.
 
 ### T1. Configuration and ledger
-- [ ] `config.py`: load `mergeworthy.toml` (limits from policy.md section 3, allowlist, deny list, languages,
+- [x] `config.py`: load `mergeworthy.toml` (limits from policy.md section 3, allowlist, deny list, languages,
       budget cap, dry-run flag defaulting to true). Secrets only from environment variables
       (`GITHUB_TOKEN`, model key), never from the file.
-- [ ] `ledger.py`: SQLite schema from architecture.md, migrations by version number, and an attempt state
+- [x] `ledger.py`: SQLite schema from architecture.md, migrations by version number, and an attempt state
       machine that rejects transitions not in the diagram.
-- [ ] `mergeworthy.example.toml` documented field by field.
+- [x] `mergeworthy.example.toml` documented field by field.
 
 **Acceptance:** tests for config validation, every allowed transition, a rejected transition, and that secrets
 in the TOML file cause an error.

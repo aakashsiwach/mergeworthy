@@ -36,10 +36,10 @@ repositories are the maintainer's own (`aakashsiwach/codeatlas-rag`, `aakashsiwa
 in the TOML file cause an error.
 
 ### T2. GitHub client (read-only)
-- [ ] `github.py`: search issues by label and language, get repository metadata, read a file, list recent
+- [x] `github.py`: search issues by label and language, get repository metadata, read a file, list recent
       commits and merged pull requests, list issue comments and timeline links to pull requests.
-- [ ] Rate-limit handling (respect `x-ratelimit-remaining` and `retry-after`), pagination, timeouts.
-- [ ] All tests use recorded or hand-written responses (respx). No network in tests.
+- [x] Rate-limit handling (respect `x-ratelimit-remaining` and `retry-after`), pagination, timeouts.
+- [x] All tests use recorded or hand-written responses (respx). No network in tests.
 
 **Acceptance:** tests for each call, pagination and rate-limit backoff.
 

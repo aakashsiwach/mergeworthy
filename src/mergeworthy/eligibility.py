@@ -28,6 +28,7 @@ from mergeworthy.github import (
     Issue,
     LinkedPullRequest,
     PullRequest,
+    PullRequestMention,
     Repository,
 )
 
@@ -50,6 +51,9 @@ class GitHubReader(Protocol):
     def list_merged_pull_requests(self, full_name: str, *, scan_limit: int = 100) -> list[PullRequest]: ...
     def list_issue_comments(self, full_name: str, number: int, *, limit: int = 300) -> list[Comment]: ...
     def list_linked_pull_requests(self, full_name: str, number: int) -> list[LinkedPullRequest]: ...
+    def search_open_pull_requests_mentioning(
+        self, full_name: str, number: int, *, limit: int = 50
+    ) -> list[PullRequestMention]: ...
 
 
 def content_hash(parts: Iterable[tuple[str, str]]) -> str:
@@ -436,23 +440,70 @@ def check_open(issue: Issue) -> CheckResult:
     return _pass("open", "issue is open")
 
 
-def check_unassigned(issue: Issue) -> CheckResult:
+def check_unassigned(issue: Issue, own_login: str | None = None) -> CheckResult:
+    others = [a for a in issue.assignees if own_login is None or a.lower() != own_login.lower()]
+    if others:
+        return _fail("unassigned", f"assigned to {', '.join(others)}")
     if issue.assignees:
-        return _fail("unassigned", f"assigned to {', '.join(issue.assignees)}")
+        return _pass("unassigned", "assigned only to us")
     return _pass("unassigned", "not assigned")
 
 
+class MentionKind(StrEnum):
+    CLOSES = "closes"  # a closing keyword or the issue URL: the pull request is about this issue
+    MENTIONS = "mentions"  # "#N" or "issue N" without a closing keyword: probably related, not certain
+    NONE = "none"  # the number appears for another reason (another repository, a version, a line number)
+
+
+_CLOSING = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+
+
+def classify_mention(mention: PullRequestMention, full_name: str, number: int) -> MentionKind:
+    """How a pull request's title and body refer to issue ``number`` in ``full_name``."""
+    text = f"{mention.title}\n{mention.body}"
+    repo = re.escape(full_name)
+    ref = rf"(?:(?<![\w/])|{repo})#{number}(?!\d)"
+    url = rf"github\.com/{repo}/issues/{number}(?!\d)"
+    if re.search(rf"\b{_CLOSING}:?\s+(?:{ref}|https?://{url})", text, re.IGNORECASE) or re.search(
+        url, text, re.IGNORECASE
+    ):
+        return MentionKind.CLOSES
+    if re.search(ref, text, re.IGNORECASE) or re.search(rf"\bissue\s+{number}(?!\d)", text, re.IGNORECASE):
+        return MentionKind.MENTIONS
+    return MentionKind.NONE
+
+
 def check_no_open_pull_request(gh: GitHubReader, issue: Issue) -> CheckResult:
-    open_prs = [
-        pr for pr in gh.list_linked_pull_requests(issue.repository, issue.number) if pr.state == "open"
+    """No open pull request is linked to the issue (timeline) or clearly refers to it (search)."""
+    name = "no_open_pull_request"
+    linked = [
+        pr.html_url
+        for pr in gh.list_linked_pull_requests(issue.repository, issue.number)
+        if pr.state == "open"
     ]
-    if open_prs:
-        return _fail(
-            "no_open_pull_request",
-            f"linked open pull request {open_prs[0].html_url}",
-            pull_requests=[pr.html_url for pr in open_prs],
+    closes: list[str] = []
+    mentions: list[str] = []
+    for found in gh.search_open_pull_requests_mentioning(issue.repository, issue.number):
+        kind = classify_mention(found, issue.repository, issue.number)
+        if kind is MentionKind.CLOSES:
+            closes.append(found.html_url)
+        elif kind is MentionKind.MENTIONS:
+            mentions.append(found.html_url)
+    definite = list(dict.fromkeys(linked + closes))
+    if definite:
+        return _fail(name, f"linked open pull request {definite[0]}", pull_requests=definite)
+    uncertain = sorted(set(mentions))
+    if uncertain:
+        return CheckResult(
+            name,
+            Status.UNCLEAR,
+            f"open pull request {uncertain[0]} mentions this issue; a human must decide if it is a fix",
+            {
+                "pull_requests": uncertain,
+                "content_hash": content_hash((url, "") for url in uncertain),
+            },
         )
-    return _pass("no_open_pull_request", "no linked open pull request")
+    return _pass(name, "no linked open pull request")
 
 
 def check_no_recent_claim(gh: GitHubReader, issue: Issue, config: Config, now: datetime) -> CheckResult:
@@ -488,7 +539,7 @@ def check_issue(gh: GitHubReader, config: Config, issue: Issue, *, now: datetime
     checks: list[Callable[[], CheckResult]] = [
         lambda: check_label(issue, config),
         lambda: check_open(issue),
-        lambda: check_unassigned(issue),
+        lambda: check_unassigned(issue, config.github_login),
         lambda: check_no_open_pull_request(gh, issue),
         lambda: check_no_recent_claim(gh, issue, config, now),
         lambda: check_specific(issue),
@@ -522,3 +573,20 @@ def apply_decisions(report: Report, lookup: DecisionLookup) -> Report:
                 )
         results.append(result)
     return Report(report.subject, results)
+
+
+# --- re-check before acting --------------------------------------------------------------------------------
+
+
+def recheck_issue(gh: GitHubReader, config: Config, issue: Issue) -> Report:
+    """The checks that can change while an attempt is in progress.
+
+    Still open, not assigned to someone else, and no pull request linked to it. Work (T5) and submission (T8)
+    must call this through ``recheck.ensure_still_available`` right before they act.
+    """
+    checks: list[Callable[[], CheckResult]] = [
+        lambda: check_open(issue),
+        lambda: check_unassigned(issue, config.github_login),
+        lambda: check_no_open_pull_request(gh, issue),
+    ]
+    return Report(f"{issue.repository}#{issue.number}", [check() for check in checks])

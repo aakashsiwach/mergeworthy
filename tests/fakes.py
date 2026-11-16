@@ -16,6 +16,7 @@ from mergeworthy.github import (
     LinkedPullRequest,
     NotFound,
     PullRequest,
+    PullRequestMention,
     Repository,
 )
 
@@ -87,6 +88,7 @@ class FakeRepo:
     issues: dict[int, Issue] = field(default_factory=dict)
     comments: dict[int, list[Comment]] = field(default_factory=dict)
     linked: dict[int, list[LinkedPullRequest]] = field(default_factory=dict)
+    mentions: dict[int, list[PullRequestMention]] = field(default_factory=dict)
 
 
 def load_fixture(name: str, full_name: str | None = None, **repo_overrides: Any) -> FakeRepo:
@@ -163,6 +165,11 @@ class FakeGitHub:
 
     def list_linked_pull_requests(self, full_name: str, number: int) -> list[LinkedPullRequest]:
         return self._repo(full_name).linked.get(number, [])
+
+    def search_open_pull_requests_mentioning(
+        self, full_name: str, number: int, *, limit: int = 50
+    ) -> list[PullRequestMention]:
+        return self._repo(full_name).mentions.get(number, [])[:limit]
 
     def close(self) -> None:
         pass

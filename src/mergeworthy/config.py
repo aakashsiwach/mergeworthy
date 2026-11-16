@@ -90,6 +90,7 @@ class Config(_Model):
     allowlist: list[str] = Field(default_factory=list)
     deny_list: list[str] = Field(default_factory=list)
     ledger_path: Path = Path("mergeworthy.sqlite3")
+    github_login: str | None = None
     limits: Limits = Field(default_factory=Limits)
     eligibility: Eligibility = Field(default_factory=Eligibility)
     budget: Budget = Field(default_factory=Budget)
@@ -103,6 +104,16 @@ class Config(_Model):
             supported = ", ".join(sorted(SUPPORTED_LANGUAGES))
             raise ValueError(f"unsupported languages {unknown}; supported: {supported}")
         return list(dict.fromkeys(cleaned))
+
+    @field_validator("github_login")
+    @classmethod
+    def _login(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip().lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", cleaned):
+            raise ValueError(f"not a GitHub login: {value!r}")
+        return cleaned
 
     @field_validator("labels")
     @classmethod

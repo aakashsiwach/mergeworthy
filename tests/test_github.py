@@ -394,4 +394,27 @@ def test_client_has_no_write_methods() -> None:
         "list_merged_pull_requests",
         "list_issue_comments",
         "list_linked_pull_requests",
+        "search_open_pull_requests_mentioning",
     }
+
+
+def test_search_open_pull_requests_mentioning(client: GitHubClient, api: respx.MockRouter) -> None:
+    route = api.get("/search/issues").respond(
+        json={
+            "total_count": 2,
+            "incomplete_results": False,
+            "items": [
+                {
+                    "number": 8,
+                    "title": "Fix parser",
+                    "body": None,
+                    "html_url": f"https://github.com/{REPO}/pull/8",
+                    "pull_request": {"url": "x"},
+                },
+                issue_json(9),  # an issue, not a pull request
+            ],
+        }
+    )
+    found = client.search_open_pull_requests_mentioning(REPO, 42)
+    assert route.calls.last.request.url.params["q"] == f"repo:{REPO} is:pr is:open 42 in:title,body"
+    assert [(m.number, m.body) for m in found] == [(8, "")]

@@ -72,6 +72,7 @@ an unclear policy, an assigned issue and an issue with a linked open pull reques
       `run_in_sandbox`.
 - [ ] Issue text passed as clearly marked untrusted data. Spend cap and time limit enforced.
 - [ ] A fake agent for tests that applies a predefined patch.
+- [ ] Call `recheck.ensure_still_available` immediately before the agent starts.
 
 **Acceptance:** with the fake agent, an end-to-end test goes from issue to diff; the real adapter is tested
 with mocks for its configuration (no shell tool, custom tool registered, budget passed).
@@ -94,6 +95,7 @@ with mocks for its configuration (no shell tool, custom tool registered, budget 
       section 4).
 - [ ] Refuses repositories not on the allowlist. Refuses attempts not in `approved`. Dry-run prints exactly
       what would be sent.
+- [ ] Call `recheck.ensure_still_available` immediately before forking or pushing.
 
 **Acceptance:** tests with mocked GitHub for the allowlist refusal, the state refusal, the description
 template and dry-run output.

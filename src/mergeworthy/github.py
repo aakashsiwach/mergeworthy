@@ -123,6 +123,15 @@ class DirectoryEntry(_Model):
     type: str
 
 
+class PullRequestMention(_Model):
+    """An open pull request found by text search; whether it really refers to the issue is decided later."""
+
+    number: int
+    title: str
+    body: str
+    html_url: str
+
+
 def _login(user: Any) -> str | None:
     return user.get("login") if isinstance(user, dict) else None
 
@@ -357,6 +366,23 @@ class GitHubClient:
             items_key="items",
         )
         return [_issue(item) for item in items if "pull_request" not in item]
+
+    def search_open_pull_requests_mentioning(
+        self, full_name: str, number: int, *, limit: int = 50
+    ) -> list[PullRequestMention]:
+        """Open pull requests in the repository whose title or body contains the issue number."""
+        query = f"repo:{_check_repo(full_name)} is:pr is:open {int(number)} in:title,body"
+        items = self._paginate("/search/issues", {"q": query}, limit=limit, items_key="items")
+        return [
+            PullRequestMention(
+                number=item["number"],
+                title=item.get("title") or "",
+                body=item.get("body") or "",
+                html_url=item["html_url"],
+            )
+            for item in items
+            if "pull_request" in item
+        ]
 
     def get_repository(self, full_name: str) -> Repository:
         return _repository(self._get_json(f"/repos/{_check_repo(full_name)}"))

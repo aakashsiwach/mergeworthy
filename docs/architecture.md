@@ -154,6 +154,16 @@ content it was about: for the AI policy, the repository's policy files. `mergewo
 a required reason. The answer is reused by every later `check` while the hash is unchanged; when the content
 changes, the question is asked again. A denial moves waiting attempts to `skipped`.
 
+**Linked pull requests.** An issue has a linked pull request if the issue timeline shows an open pull
+request cross-referencing it, or if a search for open pull requests mentioning the issue number finds one
+that uses a closing keyword (`fixes #N`) or the issue URL. A pull request that only mentions `#N` is
+uncertain and goes to a human.
+
+**Re-check before acting.** `recheck.ensure_still_available(attempt)` re-reads the issue and checks it is
+still open, not assigned to someone else (the configured `github_login` does not count) and has no linked
+pull request. On failure the attempt moves to `abandoned`; an uncertain pull request blocks until a human
+decides. Starting work (T5) and submitting (T8) must call it immediately before acting.
+
 The AI policy check matches the phrases in `src/mergeworthy/data/ai_policy_phrases.toml`: any forbidding phrase
 skips the repository, an explicit permission passes, any other mention of AI is unclear and goes to a human.
 The license check takes GitHub's `license.spdx_id` and looks it up in a vendored copy of the SPDX License

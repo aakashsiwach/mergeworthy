@@ -28,6 +28,10 @@ deny_list = []
 # SQLite ledger file, relative to the current directory.
 ledger_path = "mergeworthy.sqlite3"
 
+# GitHub login of the human who approves and authors pull requests (optional). When a maintainer assigns an
+# issue to this login after a claim, the issue still counts as available. Not a secret.
+# github_login = "your-login"
+
 # docs/policy.md section 3. Raising a limit is a deliberate change and is recorded in the ledger.
 [limits]
 # Pull requests submitted per week, across all repositories.

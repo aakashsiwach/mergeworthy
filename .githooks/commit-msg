@@ -1,0 +1,7 @@
+#!/bin/sh
+# Keep commit messages free of AI attribution lines, so commits carry only the author's identity.
+# Enable once per clone with:  git config core.hooksPath .githooks
+msg_file="$1"
+tmp_file="$msg_file.tmp"
+grep -v -i -E '^(co-authored-by:.*(claude|anthropic)|claude-session:|.*generated with \[?claude code)' "$msg_file" > "$tmp_file" || true
+mv "$tmp_file" "$msg_file"

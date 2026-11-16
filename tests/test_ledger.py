@@ -47,20 +47,35 @@ def advance(ledger: Ledger, attempt_id: int, path: list[AttemptState]) -> None:
 
 
 def test_diagram_edges() -> None:
-    assert ALLOWED_TRANSITIONS[S.DISCOVERED] == {S.ELIGIBLE, S.SKIPPED}
-    assert ALLOWED_TRANSITIONS[S.ELIGIBLE] == {S.CLAIM_DRAFTED, S.WORKING, S.SKIPPED}
-    assert ALLOWED_TRANSITIONS[S.CLAIM_DRAFTED] == {S.CLAIM_APPROVED}
-    assert ALLOWED_TRANSITIONS[S.CLAIM_APPROVED] == {S.CLAIMED}
-    assert ALLOWED_TRANSITIONS[S.CLAIMED] == {S.WORKING}
-    assert ALLOWED_TRANSITIONS[S.WORKING] == {S.SELF_REVIEWED, S.FAILED}
-    assert ALLOWED_TRANSITIONS[S.SELF_REVIEWED] == {S.AWAITING_APPROVAL, S.REJECTED}
-    assert ALLOWED_TRANSITIONS[S.AWAITING_APPROVAL] == {S.APPROVED, S.HUMAN_REJECTED}
-    assert ALLOWED_TRANSITIONS[S.APPROVED] == {S.SUBMITTED}
-    assert ALLOWED_TRANSITIONS[S.SUBMITTED] == {S.IN_REVIEW}
-    assert ALLOWED_TRANSITIONS[S.IN_REVIEW] == {S.MERGED, S.CLOSED}
+    A = {S.ABANDONED}
+    assert ALLOWED_TRANSITIONS[S.DISCOVERED] == {S.ELIGIBLE, S.SKIPPED} | A
+    assert ALLOWED_TRANSITIONS[S.ELIGIBLE] == {S.CLAIM_DRAFTED, S.WORKING, S.SKIPPED} | A
+    assert ALLOWED_TRANSITIONS[S.CLAIM_DRAFTED] == {S.CLAIM_APPROVED, S.HUMAN_REJECTED} | A
+    assert ALLOWED_TRANSITIONS[S.CLAIM_APPROVED] == {S.CLAIMED, S.DECLINED} | A
+    assert ALLOWED_TRANSITIONS[S.CLAIMED] == {S.WORKING, S.DECLINED} | A
+    assert ALLOWED_TRANSITIONS[S.WORKING] == {S.SELF_REVIEWED, S.FAILED} | A
+    assert ALLOWED_TRANSITIONS[S.SELF_REVIEWED] == {S.AWAITING_APPROVAL, S.REJECTED} | A
+    assert ALLOWED_TRANSITIONS[S.AWAITING_APPROVAL] == {S.APPROVED, S.HUMAN_REJECTED} | A
+    assert ALLOWED_TRANSITIONS[S.APPROVED] == {S.SUBMITTED} | A
+    assert ALLOWED_TRANSITIONS[S.SUBMITTED] == {S.IN_REVIEW, S.CLOSED} | A
+    assert ALLOWED_TRANSITIONS[S.IN_REVIEW] == {S.MERGED, S.CLOSED} | A
     assert set(ALLOWED_TRANSITIONS) == set(AttemptState)
-    assert TERMINAL_STATES == {S.SKIPPED, S.FAILED, S.REJECTED, S.HUMAN_REJECTED, S.MERGED, S.CLOSED}
+    assert TERMINAL_STATES == {
+        S.SKIPPED, S.FAILED, S.REJECTED, S.HUMAN_REJECTED, S.MERGED, S.CLOSED, S.DECLINED, S.ABANDONED,
+    }  # fmt: skip
     assert set(PATH_TO) == set(AttemptState) - TERMINAL_STATES
+
+
+@pytest.mark.parametrize("state", sorted(set(AttemptState) - TERMINAL_STATES))
+def test_every_non_terminal_state_can_be_abandoned(ledger: Ledger, state: AttemptState) -> None:
+    attempt_id = new_attempt(ledger)
+    advance(ledger, attempt_id, PATH_TO[state])
+    assert ledger.transition(attempt_id, S.ABANDONED, "issue was closed").state is S.ABANDONED
+
+
+@pytest.mark.parametrize("state", sorted(TERMINAL_STATES))
+def test_terminal_states_cannot_be_abandoned(state: AttemptState) -> None:
+    assert S.ABANDONED not in ALLOWED_TRANSITIONS[state]
 
 
 @pytest.mark.parametrize(("source", "target"), ALL_EDGES, ids=str)
@@ -83,6 +98,10 @@ def test_every_allowed_transition(ledger: Ledger, source: AttemptState, target: 
         (PATH_TO[S.AWAITING_APPROVAL], S.SUBMITTED),
         (PATH_TO[S.APPROVED], S.MERGED),
         (PATH_TO[S.CLAIM_DRAFTED], S.WORKING),  # claim must be approved and made first
+        (PATH_TO[S.CLAIM_DRAFTED], S.DECLINED),  # a maintainer can only decline an approved claim
+        (PATH_TO[S.WORKING], S.DECLINED),
+        (PATH_TO[S.APPROVED], S.CLOSED),  # not submitted yet
+        (PATH_TO[S.ELIGIBLE], S.HUMAN_REJECTED),
         ([S.SKIPPED], S.ELIGIBLE),  # terminal
         (PATH_TO[S.ELIGIBLE], S.ELIGIBLE),  # no self loops
     ],

@@ -36,32 +36,40 @@ class AttemptState(StrEnum):
     IN_REVIEW = "in_review"
     MERGED = "merged"
     CLOSED = "closed"
+    DECLINED = "declined"
+    ABANDONED = "abandoned"
 
 
 S = AttemptState
 
-# Edges of the diagram in docs/architecture.md, and nothing else.
-ALLOWED_TRANSITIONS: Mapping[AttemptState, frozenset[AttemptState]] = {
-    S.DISCOVERED: frozenset({S.ELIGIBLE, S.SKIPPED}),
-    S.ELIGIBLE: frozenset({S.CLAIM_DRAFTED, S.WORKING, S.SKIPPED}),
-    S.CLAIM_DRAFTED: frozenset({S.CLAIM_APPROVED}),
-    S.CLAIM_APPROVED: frozenset({S.CLAIMED}),
-    S.CLAIMED: frozenset({S.WORKING}),
-    S.WORKING: frozenset({S.SELF_REVIEWED, S.FAILED}),
-    S.SELF_REVIEWED: frozenset({S.AWAITING_APPROVAL, S.REJECTED}),
-    S.AWAITING_APPROVAL: frozenset({S.APPROVED, S.HUMAN_REJECTED}),
-    S.APPROVED: frozenset({S.SUBMITTED}),
-    S.SUBMITTED: frozenset({S.IN_REVIEW}),
-    S.IN_REVIEW: frozenset({S.MERGED, S.CLOSED}),
-    S.SKIPPED: frozenset(),
-    S.FAILED: frozenset(),
-    S.REJECTED: frozenset(),
-    S.HUMAN_REJECTED: frozenset(),
-    S.MERGED: frozenset(),
-    S.CLOSED: frozenset(),
-}
+TERMINAL_STATES = frozenset(
+    {S.SKIPPED, S.FAILED, S.REJECTED, S.HUMAN_REJECTED, S.MERGED, S.CLOSED, S.DECLINED, S.ABANDONED}
+)
 
-TERMINAL_STATES = frozenset(state for state, targets in ALLOWED_TRANSITIONS.items() if not targets)
+# Edges of the diagram in docs/architecture.md, and nothing else.
+_EDGES: dict[AttemptState, set[AttemptState]] = {
+    S.DISCOVERED: {S.ELIGIBLE, S.SKIPPED},
+    S.ELIGIBLE: {S.CLAIM_DRAFTED, S.WORKING, S.SKIPPED},
+    S.CLAIM_DRAFTED: {S.CLAIM_APPROVED, S.HUMAN_REJECTED},
+    S.CLAIM_APPROVED: {S.CLAIMED, S.DECLINED},
+    S.CLAIMED: {S.WORKING, S.DECLINED},
+    S.WORKING: {S.SELF_REVIEWED, S.FAILED},
+    S.SELF_REVIEWED: {S.AWAITING_APPROVAL, S.REJECTED},
+    S.AWAITING_APPROVAL: {S.APPROVED, S.HUMAN_REJECTED},
+    S.APPROVED: {S.SUBMITTED},
+    S.SUBMITTED: {S.IN_REVIEW, S.CLOSED},
+    S.IN_REVIEW: {S.MERGED, S.CLOSED},
+}
+# Any non-terminal attempt can be abandoned: the issue was closed, assigned elsewhere, or a pull request
+# linked to it appeared.
+for _targets in _EDGES.values():
+    _targets.add(S.ABANDONED)
+
+ALLOWED_TRANSITIONS: Mapping[AttemptState, frozenset[AttemptState]] = {
+    state: frozenset(_EDGES.get(state, set())) for state in AttemptState
+}
+assert all(not ALLOWED_TRANSITIONS[s] for s in TERMINAL_STATES)
+assert all(ALLOWED_TRANSITIONS[s] for s in set(AttemptState) - TERMINAL_STATES)
 
 
 class LedgerError(Exception):

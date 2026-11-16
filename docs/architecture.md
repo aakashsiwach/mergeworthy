@@ -10,15 +10,25 @@ recorded in the ledger with a timestamp and a reason.
 
 ```text
 discovered ─▶ eligible ─▶ (claim_drafted ─▶ claim_approved ─▶ claimed) ─▶ working ─▶ self_reviewed
-     │            │                                                          │            │
-     ▼            ▼                                                          ▼            ▼
-  skipped      skipped                                                    failed      rejected
-                                                                                          
+     │            │              │                │               │            │            │
+     ▼            ▼              ▼                ▼               ▼            ▼            ▼
+  skipped      skipped     human_rejected      declined        declined      failed      rejected
+
 self_reviewed ─▶ awaiting_approval ─▶ approved ─▶ submitted ─▶ in_review ─▶ merged | closed
-                        │
-                        ▼
-                  human_rejected
+                        │                            │
+                        ▼                            ▼
+                  human_rejected                   closed
+
+any state that is not terminal ─▶ abandoned
 ```
+
+Terminal states: `skipped`, `failed`, `rejected`, `human_rejected`, `declined`, `merged`, `closed`, `abandoned`.
+
+- `human_rejected` after `claim_drafted`: the human did not approve the claim comment.
+- `declined`: a maintainer turned down the claim, before or after it was posted.
+- `submitted ─▶ closed`: the pull request was closed before review started.
+- `abandoned`: the issue was closed, assigned to someone else, or a linked pull request appeared. Checked
+  again right before work starts and right before submission.
 
 The claim steps only happen when the project's contributing guide asks contributors to claim an issue first.
 

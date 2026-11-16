@@ -1,0 +1,91 @@
+# Phrases used by the AI policy check (docs/policy.md section 1).
+#
+# The check reads a repository's contributing guides, code of conduct, pull request templates and AI_POLICY*
+# files. Text is normalised first: line breaks inside paragraphs become spaces, runs of whitespace collapse,
+# and curly quotes become straight quotes. Every pattern is a Python regular expression matched
+# case-insensitively; use (?-i:...) for parts that must keep their case, such as "AI".
+#
+# Decision, in this order:
+#   1. any `forbid` pattern matches             -> skip the repository (fail)
+#   2. any `permit` pattern matches             -> pass (disclosure wording is recorded for the PR)
+#   3. any `mention` pattern matches            -> unclear: skip and list for a human to decide
+#   4. nothing matches                          -> pass: the project states no AI policy
+#
+# When in doubt, prefer a pattern that makes the check skip a repository. A wrongly skipped repository costs
+# nothing; a pull request to a project that refuses AI help costs a maintainer's time and trust.
+#
+# To extend: add a [[forbid]], [[permit]] or [[mention]] entry with a `pattern` and a `note` explaining what it
+# catches, and add a sentence that it must (and one it must not) match to tests/test_ai_policy.py.
+
+# Words that refer to AI tools. Reused inside the other patterns as {ai}.
+ai_terms = '(?:\b(?-i:AI|A\.I\.)\b|\bLLMs?\b|\blarge language models?\b|\blanguage models?\b|\bChatGPT\b|\bGPT-?\d*\b|\bCopilot\b|\bClaude\b|\bGemini\b|\bgenerative\b|\bartificial intelligence\b|\bmachine[- ]generated\b|\bcode assistants?\b|\bcoding agents?\b|\bvibe[- ]cod)'
+
+# --- forbid: the project refuses or discourages AI-generated or AI-assisted contributions --------------------
+
+[[forbid]]
+pattern = '\b(?:do not|don\x27t|does not|doesn\x27t|will not|won\x27t|cannot|can\x27t|no longer|never)\s+(?:accept|allow|permit|welcome|take|review|merge|want)\b[^.!?]{0,80}{ai}'
+note = 'We do not accept / will not review ... AI-generated ...'
+
+[[forbid]]
+pattern = '{ai}[^.!?]{0,60}\b(?:(?:is|are)\s+not|(?:will|may|must|should)\s+not\s+be|(?:won\x27t|cannot|can\x27t)\s+be|not)\s+(?:accepted|allowed|permitted|welcome|welcomed|tolerated|reviewed|merged)\b'
+note = 'AI-generated contributions are not accepted / will not be merged / not welcome'
+
+[[forbid]]
+pattern = '{ai}[^.!?]{0,80}\b(?:prohibited|forbidden|banned|disallowed|unwelcome|not acceptable)\b'
+note = 'AI-generated code is prohibited / banned'
+
+[[forbid]]
+pattern = '{ai}[^.!?]{0,80}\bwill be (?:closed|rejected|deleted|removed|reported|banned|ignored)\b'
+note = 'Pull requests that appear to be AI-generated will be closed'
+
+[[forbid]]
+pattern = '\b(?:prohibit|prohibits|forbid|forbids|ban|bans|disallow|disallows|reject|rejects)\b[^.!?]{0,60}{ai}'
+note = 'We prohibit / ban ... AI ...'
+
+[[forbid]]
+pattern = '\bno\s+{ai}[- ]?(?:generated|assisted|written|authored)?\s*(?:code|contributions?|pull requests?|PRs?|patches|changes|submissions?)\b'
+note = 'No AI-generated code / no AI contributions'
+
+[[forbid]]
+pattern = '\b(?:discourage|discourages|discouraged|strongly discourage|frown upon|frowned upon)\b[^.!?]{0,80}{ai}'
+note = 'We discourage ... AI ...'
+
+[[forbid]]
+pattern = '{ai}[^.!?]{0,80}\b(?:is|are)\s+(?:strongly\s+)?(?:discouraged|frowned upon)\b'
+note = 'AI tools are discouraged'
+
+[[forbid]]
+pattern = '\b(?:please\s+)?(?:do not|don\x27t|never|avoid|refrain from|must not|should not|shouldn\x27t|may not)\s+(?:use|using|submit|submitting|send|sending|open|opening)\b[^.!?]{0,40}{ai}'
+note = 'Do not use AI tools / do not submit AI-generated code'
+
+[[forbid]]
+pattern = '\bonly\s+(?:accept|accepts|welcome|welcomes)\s+(?:contributions?|code|pull requests?)\s+(?:written|authored|made)\s+(?:entirely\s+)?by\s+humans?\b'
+note = 'We only accept contributions written by humans'
+
+# --- permit: the project explicitly accepts AI-assisted contributions -----------------------------------------
+
+[[permit]]
+pattern = '{ai}[- ]?(?:assisted|generated|aided)?\s*(?:contributions?|pull requests?|PRs?|changes|code|patches)\s+(?:are|is)\s+(?:welcome|welcomed|accepted|allowed|permitted|fine|ok|okay)\b'
+note = 'AI-assisted contributions are welcome'
+
+[[permit]]
+pattern = '\b(?:you\s+)?(?:may|can|are welcome to|are allowed to|are free to|are permitted to)\s+use\b[^.!?]{0,30}{ai}'
+note = 'You may use AI tools'
+
+[[permit]]
+pattern = '{ai}[^.!?]{0,40}\b(?:tools?|assistants?)\s+(?:are|is)\s+(?:allowed|permitted|welcome|fine|ok|okay)\b'
+note = 'AI tools are allowed'
+
+[[permit]]
+pattern = '\b(?:disclose|disclosure|declare|state|mention|note)\b[^.!?]{0,80}{ai}'
+note = 'Disclose AI assistance in the pull request (acceptance with a condition; the wording is recorded)'
+
+[[permit]]
+pattern = '{ai}[^.!?]{0,80}\b(?:must|should|need to|needs to|has to|have to)\s+be\s+(?:disclosed|declared|mentioned|noted)\b'
+note = 'Use of AI must be disclosed'
+
+# --- mention: the text talks about AI but neither forbids nor permits it clearly -> human decides ---------------
+
+[[mention]]
+pattern = '{ai}'
+note = 'Any reference to AI tools in a policy document'

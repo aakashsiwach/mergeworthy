@@ -127,6 +127,16 @@ mergeworthy replay [--split dev|test] [--final]              run the replay benc
 
 `--dry-run` is the default for anything that would write to GitHub until it is explicitly configured off.
 
+`discover` and `check` only read from GitHub. `discover` stores candidates and opens one attempt per new issue in
+`discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible` or
+`skipped`; a skip that needs a human decision has a reason starting with `needs human decision`. `check` exits
+with 0 (eligible), 1 (not eligible or error), 2 (configuration error) or 3 (a human must decide).
+
+The AI policy check matches the phrases in `src/mergeworthy/data/ai_policy_phrases.toml`: any forbidding phrase
+skips the repository, an explicit permission passes, any other mention of AI is unclear and goes to a human.
+Accepted licenses are listed in `src/mergeworthy/data/osi_licenses.txt`. The "tests run within 15 minutes"
+check is reported as `deferred` until the sandbox (T4) measures it.
+
 ## Technology
 
 Python 3.11+, Typer, Pydantic v2, httpx, SQLite (standard library), Docker (via the `docker` CLI), the Claude

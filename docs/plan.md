@@ -44,12 +44,12 @@ in the TOML file cause an error.
 **Acceptance:** tests for each call, pagination and rate-limit backoff.
 
 ### T3. Discovery and eligibility
-- [ ] `discover.py`: candidate issues for the configured languages and labels; store in the ledger.
-- [ ] `eligibility.py`: every check in policy.md sections 1 and 2, each returning pass/fail with a reason.
-- [ ] AI policy check: find the contributing guide, code of conduct, PR template and `AI_POLICY*`; a rule list
+- [x] `discover.py`: candidate issues for the configured languages and labels; store in the ledger.
+- [x] `eligibility.py`: every check in policy.md sections 1 and 2, each returning pass/fail with a reason.
+- [x] AI policy check: find the contributing guide, code of conduct, PR template and `AI_POLICY*`; a rule list
       of phrases that forbid or discourage AI contributions; unclear wording → skip and flag for a human.
       Keep the phrase list in a data file with comments, so it is easy to review and extend.
-- [ ] `mergeworthy discover` and `mergeworthy check`.
+- [x] `mergeworthy discover` and `mergeworthy check`.
 
 **Acceptance:** fixture repositories covering each pass and fail reason, including an AI-forbidding policy,
 an unclear policy, an assigned issue and an issue with a linked open pull request.

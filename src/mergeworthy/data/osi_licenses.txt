@@ -1,0 +1,47 @@
+# SPDX identifiers of OSI-approved licenses, as GitHub reports them in a repository's `license.spdx_id`.
+# One per line; lines starting with # are comments. This is a reviewed subset of https://opensource.org/licenses.
+# A license that is not listed fails the license check, so the repository is skipped: add it here only after
+# confirming it is OSI-approved. GitHub reports "NOASSERTION" for licenses it cannot identify; that fails too.
+0BSD
+AFL-3.0
+AGPL-3.0
+AGPL-3.0-only
+AGPL-3.0-or-later
+Apache-2.0
+Artistic-2.0
+BSD-2-Clause
+BSD-3-Clause
+BSL-1.0
+CDDL-1.0
+ECL-2.0
+EPL-1.0
+EPL-2.0
+EUPL-1.1
+EUPL-1.2
+GPL-2.0
+GPL-2.0-only
+GPL-2.0-or-later
+GPL-3.0
+GPL-3.0-only
+GPL-3.0-or-later
+ISC
+LGPL-2.1
+LGPL-2.1-only
+LGPL-2.1-or-later
+LGPL-3.0
+LGPL-3.0-only
+LGPL-3.0-or-later
+LPPL-1.3c
+MIT
+MIT-0
+MPL-2.0
+MS-PL
+MS-RL
+MulanPSL-2.0
+NCSA
+OFL-1.1
+OSL-3.0
+PostgreSQL
+UPL-1.0
+Unlicense
+Zlib

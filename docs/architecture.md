@@ -156,7 +156,9 @@ changes, the question is asked again. A denial moves waiting attempts to `skippe
 
 The AI policy check matches the phrases in `src/mergeworthy/data/ai_policy_phrases.toml`: any forbidding phrase
 skips the repository, an explicit permission passes, any other mention of AI is unclear and goes to a human.
-Accepted licenses are listed in `src/mergeworthy/data/osi_licenses.txt`. The "tests run within 15 minutes"
+The license check takes GitHub's `license.spdx_id` and looks it up in a vendored copy of the SPDX License
+List (`src/mergeworthy/data/spdx_licenses.json`, with its source URL and version; refresh with
+`scripts/update_spdx_licenses.py`). It fails closed: a missing, unknown or non-OSI-approved identifier fails. The "tests run within 15 minutes"
 check is reported as `deferred` until the sandbox (T4) measures it.
 
 ## Technology

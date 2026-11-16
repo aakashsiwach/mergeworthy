@@ -8,6 +8,7 @@ later (in the sandbox) and does not block at this stage.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -132,10 +133,20 @@ def _fail(name: str, reason: str, **details: Any) -> CheckResult:
 
 
 @cache
-def osi_licenses() -> frozenset[str]:
-    text = resources.files("mergeworthy").joinpath("data/osi_licenses.txt").read_text(encoding="utf-8")
-    lines = (line.strip() for line in text.splitlines())
-    return frozenset(line.lower() for line in lines if line and not line.startswith("#"))
+def spdx_license_list() -> dict[str, Any]:
+    """The vendored SPDX License List (``data/spdx_licenses.json``): identifier -> OSI-approved flag."""
+    text = resources.files("mergeworthy").joinpath("data/spdx_licenses.json").read_text(encoding="utf-8")
+    data: dict[str, Any] = json.loads(text)
+    return data
+
+
+@cache
+def osi_approved() -> dict[str, bool]:
+    """Lower-cased SPDX identifier -> ``isOsiApproved``. Raises if the vendored list is missing or broken."""
+    licenses = spdx_license_list()["licenses"]
+    if not isinstance(licenses, dict) or not licenses:
+        raise RuntimeError("the vendored SPDX license list is empty or malformed")
+    return {str(k).lower(): v is True for k, v in licenses.items()}
 
 
 def _is_bot(login: str | None) -> bool:
@@ -254,9 +265,12 @@ def check_license(repo: Repository) -> CheckResult:
     spdx = repo.license_spdx_id
     if not spdx or spdx == "NOASSERTION":
         return _fail("license", "no license that GitHub could identify")
-    if spdx.lower() not in osi_licenses():
-        return _fail("license", f"{spdx} is not on the list of OSI-approved licenses", spdx_id=spdx)
-    return _pass("license", f"{spdx} is OSI-approved", spdx_id=spdx)
+    approved = osi_approved().get(spdx.lower())
+    if approved is None:
+        return _fail("license", f"{spdx} is not in the SPDX license list", spdx_id=spdx)
+    if not approved:
+        return _fail("license", f"{spdx} is not OSI-approved according to SPDX", spdx_id=spdx)
+    return _pass("license", f"{spdx} is OSI-approved according to SPDX", spdx_id=spdx)
 
 
 def check_language(repo: Repository, config: Config) -> CheckResult:

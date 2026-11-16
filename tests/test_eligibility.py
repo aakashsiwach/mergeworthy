@@ -10,6 +10,7 @@ from mergeworthy.eligibility import (
     check_issue,
     check_repository,
     fetch_policy_documents,
+    spdx_license_list,
 )
 from mergeworthy.github import Comment, LinkedPullRequest
 
@@ -126,8 +127,45 @@ def test_repository_metadata_failures(overrides: dict[str, object], check: str) 
     assert not report.eligible
 
 
-def test_license_check_accepts_other_osi_licenses() -> None:
-    assert status(repo_report("welcoming", license_spdx_id="Apache-2.0"), "license") is Status.PASS
+@pytest.mark.parametrize("spdx", ["Apache-2.0", "GPL-3.0", "GPL-3.0-only", "MPL-2.0", "BSD-3-Clause", "0BSD"])
+def test_license_check_accepts_osi_licenses(spdx: str) -> None:
+    assert status(repo_report("welcoming", license_spdx_id=spdx), "license") is Status.PASS
+
+
+@pytest.mark.parametrize(
+    ("spdx", "reason"),
+    [
+        ("CC0-1.0", "not OSI-approved"),  # in SPDX, not OSI-approved
+        ("WTFPL", "not OSI-approved"),
+        ("BUSL-1.1", "not OSI-approved"),
+        ("Made-Up-1.0", "not in the SPDX license list"),  # unknown: fail closed
+    ],
+)
+def test_license_check_fails_closed(spdx: str, reason: str) -> None:
+    result = repo_report("welcoming", license_spdx_id=spdx).get("license")
+    assert result is not None
+    assert result.status is Status.FAIL
+    assert reason in result.reason
+
+
+def test_vendored_spdx_list_names_its_source() -> None:
+    data = spdx_license_list()
+    assert data["source"].startswith("https://raw.githubusercontent.com/spdx/license-list-data/v")
+    assert data["licenseListVersion"]
+    assert len(data["licenses"]) > 500
+    assert all(isinstance(v, bool) for v in data["licenses"].values())
+
+
+def test_malformed_license_list_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mergeworthy import eligibility
+
+    eligibility.osi_approved.cache_clear()
+    monkeypatch.setattr(eligibility, "spdx_license_list", lambda: {"licenses": {}})
+    try:
+        with pytest.raises(RuntimeError, match="malformed"):
+            eligibility.check_license(load_fixture("welcoming").repository)
+    finally:
+        eligibility.osi_approved.cache_clear()
 
 
 def test_language_must_be_configured() -> None:

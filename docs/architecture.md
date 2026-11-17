@@ -226,7 +226,9 @@ mergeworthy replay [--split dev|test] [--final]              run the replay benc
 `work` is a dry run by default: it runs the eligibility checks and stored decisions without writing to the
 ledger, prints the steps it would take, and starts no sandbox and spends nothing. `--no-dry-run` records the
 check and runs the attempt. It refuses repositories whose contributing guide asks to claim issues first until
-the claim flow (T14) exists. Exit codes: 0 done, 1 not possible or failed, 3 a human must decide.
+the claim flow (T14) exists. Exit codes: 0 the attempt is awaiting approval (or, in a dry run, the issue is
+workable), 3 rejected by self-review, 4 a human must decide something first (`mergeworthy decide`), 1 any
+other error or failure (not eligible, abandoned, failed verification, sandbox or agent errors).
 
 `review` lists attempts in `awaiting_approval`, then shows one: the issue, the agent's summary (marked as
 unverified claims), the full diff (paged), baseline and agent test runs, verification, self-review, policy

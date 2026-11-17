@@ -34,6 +34,10 @@ from mergeworthy.review import ClaudeReviewer, Reviewer
 from mergeworthy.sandbox import SandboxError, docker_available
 from mergeworthy.work import STARTABLE, SandboxFactory, default_sandbox, plan_work, run_attempt
 
+# `mergeworthy work` exit codes (docs/architecture.md).
+EXIT_REJECTED = 3
+EXIT_NEEDS_HUMAN = 4
+
 app = typer.Typer(
     name="mergeworthy",
     help="An autonomous open-source contributor that only submits work a human has approved.",
@@ -246,8 +250,8 @@ def work_command(
 ) -> None:
     """Run one attempt end to end up to verification. Dry run by default.
 
-    Exits 0 when the attempt produced a diff (or the dry run found the issue workable), 1 when it cannot or
-    did not succeed, 3 when a human must decide first.
+    Exit codes: 0 the attempt is awaiting approval (or the dry run found the issue workable), 3 rejected by
+    self-review, 4 a human must decide something first, 1 any other error or failure.
     """
     config = _load(config_path)
     now = datetime.now(UTC)
@@ -267,7 +271,7 @@ def work_command(
                 raise typer.Exit(1)
             if not plan.eligible:
                 console.print("needs a human decision first: `mergeworthy decide`", style="yellow")
-                raise typer.Exit(3)
+                raise typer.Exit(EXIT_NEEDS_HUMAN)
             if dry_run:
                 console.print(safe(f"dry run: {plan.target}"), style="bold")
                 for number, step in enumerate(plan.steps(config), 1):
@@ -293,7 +297,7 @@ def work_command(
             )
     except AwaitingHumanDecision as exc:
         console.print(safe(f"paused: {exc}"), style="yellow")
-        raise typer.Exit(3) from exc
+        raise typer.Exit(EXIT_NEEDS_HUMAN) from exc
     except NoLongerAvailable as exc:
         console.print(safe(f"abandoned: {exc}"), style="red")
         raise typer.Exit(1) from exc
@@ -304,6 +308,8 @@ def work_command(
     console.print(safe(f"attempt {outcome.attempt_id}: {outcome.state.value} ({outcome.reason})"))
     if outcome.result is not None:
         console.print(f"spend: ${outcome.result.spend_usd:.2f}")
+    if outcome.state is AttemptState.REJECTED:
+        raise typer.Exit(EXIT_REJECTED)
     if outcome.state is not AttemptState.AWAITING_APPROVAL:
         raise typer.Exit(1)
 

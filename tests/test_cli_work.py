@@ -84,7 +84,7 @@ def test_run_needs_docker(env: dict[str, object], monkeypatch: pytest.MonkeyPatc
     ("target", "code", "text"),
     [
         ("good/repo#13", 1, "not eligible"),
-        ("unclear/repo#1", 3, "needs a human decision"),
+        ("unclear/repo#1", 4, "needs a human decision"),
         ("claim/repo#1", 1, "claim issues first"),
         ("good/repo", 1, "work needs an issue"),
     ],
@@ -95,3 +95,33 @@ def test_refusals(env: dict[str, object], target: str, code: int, text: str) -> 
         assert result.exit_code == code, result.output  # type: ignore[attr-defined]
         assert text in result.output  # type: ignore[attr-defined]
     assert env["agent"].seen == []  # type: ignore[attr-defined]
+
+
+def test_exit_code_3_when_self_review_rejects(
+    env: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mergeworthy.review import Verdict
+
+    monkeypatch.setattr(cli, "make_reviewer", lambda config: FakeReviewer(Verdict.REJECT))
+    result = invoke(env, "good/repo#12", "--no-dry-run")
+    assert result.exit_code == 3, result.output  # type: ignore[attr-defined]
+    assert "rejected" in result.output  # type: ignore[attr-defined]
+
+
+def test_exit_code_1_when_the_attempt_fails(env: dict[str, object], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "make_sandbox_factory", lambda: factory(install_ok=False))
+    result = invoke(env, "good/repo#12", "--no-dry-run")
+    assert result.exit_code == 1, result.output  # type: ignore[attr-defined]
+    assert "failed" in result.output  # type: ignore[attr-defined]
+
+
+def test_exit_code_4_when_paused_for_a_human(env: dict[str, object], monkeypatch: pytest.MonkeyPatch) -> None:
+    from mergeworthy.github import PullRequestMention
+
+    gh = github()
+    gh.repos[REPO].mentions[12] = [
+        PullRequestMention(number=8, title="Refactor", body="Related to #12", html_url="https://x/pull/8")
+    ]
+    monkeypatch.setattr(cli, "make_client", lambda: gh)
+    result = invoke(env, "good/repo#12", "--no-dry-run")
+    assert result.exit_code == 4, result.output  # type: ignore[attr-defined]

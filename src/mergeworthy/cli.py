@@ -28,6 +28,7 @@ from mergeworthy.eligibility import Report, Status
 from mergeworthy.github import GitHubClient, GitHubError
 from mergeworthy.ledger import AttemptState, Decision, Ledger, LedgerError
 from mergeworthy.recheck import AwaitingHumanDecision, NoLongerAvailable
+from mergeworthy.review import ClaudeReviewer, Reviewer
 from mergeworthy.sandbox import SandboxError, docker_available
 from mergeworthy.work import STARTABLE, SandboxFactory, default_sandbox, plan_work, run_attempt
 
@@ -218,6 +219,10 @@ def make_agent(config: Config) -> CodingAgent:
     return ClaudeCodingAgent(model=config.agent.model)
 
 
+def make_reviewer(config: Config) -> Reviewer:
+    return ClaudeReviewer(model=config.review.model)
+
+
 def make_sandbox_factory() -> SandboxFactory:
     return default_sandbox
 
@@ -281,6 +286,7 @@ def work_command(
                 config,
                 checked.attempt_id,
                 make_agent(config),
+                reviewer=make_reviewer(config),
                 sandbox_factory=make_sandbox_factory(),
             )
     except AwaitingHumanDecision as exc:
@@ -296,5 +302,5 @@ def work_command(
     console.print(safe(f"attempt {outcome.attempt_id}: {outcome.state.value} ({outcome.reason})"))
     if outcome.result is not None:
         console.print(f"spend: ${outcome.result.spend_usd:.2f}")
-    if outcome.state is not AttemptState.WORKING and outcome.state is not AttemptState.AWAITING_APPROVAL:
+    if outcome.state is not AttemptState.AWAITING_APPROVAL:
         raise typer.Exit(1)

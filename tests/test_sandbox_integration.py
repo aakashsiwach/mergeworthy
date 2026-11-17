@@ -94,3 +94,50 @@ def test_project_code_cannot_modify_git_metadata(box: Sandbox) -> None:
     hook = box.run(plan, "touch .git/hooks/pre-commit && echo WROTE || echo BLOCKED")
     assert "BLOCKED" in hook.output
     assert box.diff() == ""  # mergeworthy's own git command still works
+
+
+OVERFLOW_TEST = """package example;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import org.junit.jupiter.api.Test;
+
+class OverflowTest {
+    @Test
+    void addRejectsOverflow() {
+        assertThrows(ArithmeticException.class, () -> Calculator.add(Integer.MAX_VALUE, 1));
+    }
+}
+"""
+
+
+def test_verification_rules_in_docker(box: Sandbox) -> None:
+    from mergeworthy.agent import Budget, Task
+    from mergeworthy.agent.fake import FakeAgent
+    from mergeworthy.config import Config
+    from mergeworthy.verify import verify_attempt
+    from mergeworthy.work import BoundSandbox, diff_stats
+
+    box.load_local(FIXTURES / "maven-sample")
+    plan = box.detect()
+    assert box.install(plan).ok
+    baseline = box.run_tests(plan, timeout_minutes=15)
+    assert baseline.ok, baseline.output
+    source = "src/main/java/example/Calculator.java"
+    fixed = (box.workdir / source).read_text(encoding="utf-8").replace("a + b", "Math.addExact(a, b)")
+    agent = FakeAgent(files={source: fixed, "src/test/java/example/OverflowTest.java": OVERFLOW_TEST})
+    task = Task(
+        "local/maven-sample", 1, "https://github.com/local/maven-sample/issues/1", "t", "b", plan.test
+    )
+    diff = agent.attempt(task, box.workdir, BoundSandbox(box, plan), Budget(1.0, 10, 5)).diff
+    report = verify_attempt(
+        box,
+        plan,
+        Config(),
+        diff=diff,
+        stats=diff_stats(diff),
+        baseline={"exit_code": 0, "timed_out": False},
+        root_files=box.root_files(),
+    )
+    assert report.passed, report.summary()
+    assert box.diff() == diff  # the fix is back after testing without it

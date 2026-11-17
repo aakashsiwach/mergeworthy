@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2",
     "httpx>=0.27",
     "claude-agent-sdk>=0.2.183",
+    "anthropic>=2.9",
 ]
 
 [project.optional-dependencies]

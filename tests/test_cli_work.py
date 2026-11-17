@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 from fakes import FakeGitHub, load_fixture, make_issue
-from test_work import FIX, factory
+from test_work import FIX, FakeReviewer, factory
 from typer.testing import CliRunner
 
 from mergeworthy import cli
@@ -38,6 +38,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     monkeypatch.setattr(cli, "make_client", github)
     monkeypatch.setattr(cli, "make_agent", lambda config: agent)
     monkeypatch.setattr(cli, "make_sandbox_factory", lambda: make)
+    monkeypatch.setattr(cli, "make_reviewer", lambda config: FakeReviewer())
     monkeypatch.setattr(cli, "sandbox_ready", lambda: True)
     return {"config": str(config), "ledger": ledger_path, "agent": agent, "make": make}
 
@@ -63,11 +64,11 @@ def test_dry_run_is_the_default_and_changes_nothing(env: dict[str, object]) -> N
 def test_run_produces_a_diff(env: dict[str, object]) -> None:
     result = invoke(env, "good/repo#12", "--no-dry-run")
     assert result.exit_code == 0, result.output  # type: ignore[attr-defined]
-    assert "working (diff ready for verification)" in result.output  # type: ignore[attr-defined]
+    assert "awaiting_approval (ready for human approval)" in result.output  # type: ignore[attr-defined]
     assert "spend: $0.30" in result.output  # type: ignore[attr-defined]
     with Ledger(str(env["ledger"])) as ledger:
         [attempt] = ledger.attempts_for_subject(f"{REPO}#12")
-        assert attempt.state is AttemptState.WORKING
+        assert attempt.state is AttemptState.AWAITING_APPROVAL
         assert ledger.attempt_details(attempt.id)["diff_stats"]["files"] == sorted(FIX)
 
 

@@ -74,6 +74,9 @@ assert all(not ALLOWED_TRANSITIONS[s] for s in TERMINAL_STATES)
 assert all(ALLOWED_TRANSITIONS[s] for s in set(AttemptState) - TERMINAL_STATES)
 
 
+_JSON_FIELDS = ("diff_stats", "test_results", "review_reasons", "commands", "verification")
+
+
 class LedgerError(Exception):
     pass
 
@@ -204,7 +207,19 @@ def _migration_2(conn: sqlite3.Connection) -> None:
 
 
 # Append new migrations; never edit or reorder an existing one.
-MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (_migration_1, _migration_2)
+def _migration_3(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        -- What the agent produced, kept as text: approval shows it and submission applies exactly this diff.
+        ALTER TABLE attempts ADD COLUMN diff TEXT;
+        ALTER TABLE attempts ADD COLUMN explanation TEXT;
+        ALTER TABLE attempts ADD COLUMN commands TEXT;       -- JSON list
+        ALTER TABLE attempts ADD COLUMN verification TEXT;   -- JSON list of rule results
+        """
+    )
+
+
+MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (_migration_1, _migration_2, _migration_3)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -401,13 +416,24 @@ class Ledger:
 
     def update_attempt(self, attempt_id: int, **fields: Any) -> None:
         """Record results on an attempt: ``branch``, ``diff_stats``, ``test_results``, ``spend_usd``."""
-        allowed = {"branch", "diff_stats", "test_results", "spend_usd"}
+        allowed = {
+            "branch",
+            "diff_stats",
+            "test_results",
+            "spend_usd",
+            "diff",
+            "explanation",
+            "commands",
+            "verification",
+            "review_verdict",
+            "review_reasons",
+        }
         unknown = set(fields) - allowed
         if unknown:
             raise LedgerError(f"unknown attempt fields: {sorted(unknown)}")
         if not fields:
             return
-        values = {k: _json(v) if k in {"diff_stats", "test_results"} else v for k, v in fields.items()}
+        values = {k: _json(v) if k in _JSON_FIELDS else v for k, v in fields.items()}
         sets = ", ".join(f"{k} = ?" for k in values)
         with self._tx() as conn:
             cur = conn.execute(
@@ -422,7 +448,7 @@ class Ledger:
         if row is None:
             raise LedgerError(f"no attempt with id {attempt_id}")
         record = dict(row)
-        for key in ("diff_stats", "test_results", "review_reasons"):
+        for key in _JSON_FIELDS:
             if record[key] is not None:
                 record[key] = json.loads(record[key])
         return record

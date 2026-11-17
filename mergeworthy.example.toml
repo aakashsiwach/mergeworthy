@@ -70,6 +70,10 @@ model = "claude-opus-5-5"
 # Maximum agent turns per attempt (the spend and time caps in [budget] also apply).
 max_turns = 80
 
+# Self-review: a separate model call that answers the rubric in src/mergeworthy/data/review_rubric.md.
+[review]
+model = "claude-opus-5-5"
+
 # Docker sandbox (docs/architecture.md). Containers get no host environment variables and no secrets.
 [sandbox]
 # Where working copies live on the host; one directory per attempt. Default: ~/.mergeworthy/work

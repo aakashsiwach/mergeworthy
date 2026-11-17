@@ -368,3 +368,13 @@ def test_maven_fetch_container_has_no_repository_mount(tmp_path: Path) -> None:
     assert mounts == [f"type=volume,source={box.volume},target=/work/deps"]
     tests_run = docker.calls[0]
     assert any("target=/work/repo/.git,readonly" in a for a in tests_run)
+
+
+def test_clone_excludes_build_output_from_diffs(tmp_path: Path) -> None:
+    docker = FakeDocker()
+    box = sandbox(tmp_path, docker)
+    box.clone("owner/repo", "abcdef1")
+    script = docker.calls[0][-1]
+    assert ">> .git/info/exclude" in script
+    for pattern in ("'target/'", "'build/'", "'__pycache__/'", "'*.egg-info/'", "'.gradle/'"):
+        assert pattern in script

@@ -14,10 +14,12 @@ from mergeworthy.config import Config
 from mergeworthy.discover import check_and_record
 from mergeworthy.ledger import AttemptState, Ledger
 from mergeworthy.recheck import NoLongerAvailable
+from mergeworthy.review import ReviewRequest, ReviewResult, Verdict
 from mergeworthy.sandbox import BuildPlan, RunResult, SandboxSettings, detect_build
 from mergeworthy.work import diff_stats, run_attempt
 
 REPO = "good/repo"
+CALCULATOR = "src/main/java/example/Calculator.java"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -31,12 +33,15 @@ class MemorySandbox:
         source: Path,
         install_ok: bool = True,
         baseline: str = "pass",
+        tests_pass_always: bool = False,
     ) -> None:
         self._workdir = settings.work_root / str(attempt_id) / "repo"
         self.settings = settings
         self.source = source
         self.install_ok = install_ok
         self.baseline = baseline
+        self.baseline_done = False
+        self.tests_pass_always = tests_pass_always
         self.cloned: tuple[str, str] | None = None
         self.commands: list[str] = []
         self.snapshot: dict[str, str] = {}
@@ -66,10 +71,42 @@ class MemorySandbox:
         )
 
     def run_tests(self, plan: BuildPlan, timeout_minutes: float) -> RunResult:
-        self.commands.append(f"baseline:{timeout_minutes}")
-        if self.baseline == "timeout":
-            return RunResult(-1, "", True, timeout_minutes * 60)
-        return RunResult(0 if self.baseline == "pass" else 1, "Tests run: 1, Failures: 1", False, 3.0)
+        if not self.baseline_done:
+            self.baseline_done = True
+            self.commands.append(f"baseline:{timeout_minutes}")
+            if self.baseline == "timeout":
+                return RunResult(-1, "", True, timeout_minutes * 60)
+            return RunResult(0 if self.baseline == "pass" else 1, "Tests run: 1, Failures: 1", False, 3.0)
+        files = self._files()
+        fixed = "addExact" in files.get(CALCULATOR, "")
+        passed = self.tests_pass_always or "src/test/java/example/OverflowTest.java" not in files or fixed
+        self.commands.append("tests:pass" if passed else "tests:fail")
+        return RunResult(0 if passed else 1, "Tests run: 2", False, 3.0)
+
+    def root_files(self) -> set[str]:
+        return {p.name for p in self._workdir.iterdir()}
+
+    def read_text(self, relative: str, limit: int = 1_000_000) -> str | None:
+        path = self._workdir / relative
+        return path.read_text(encoding="utf-8") if path.is_file() else None
+
+    def read_bytes(self, relative: str) -> bytes | None:
+        path = self._workdir / relative
+        return path.read_bytes() if path.is_file() else None
+
+    def write_bytes(self, relative: str, content: bytes | None) -> None:
+        path = self._workdir / relative
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(content)
+
+    def restore_from_head(self, restore: list[str], remove: list[str]) -> RunResult:
+        for path in restore:
+            (self._workdir / path).write_bytes(self.snapshot[path].encode())
+        for path in remove:
+            (self._workdir / path).unlink(missing_ok=True)
+        return RunResult(0, "", False, 0.0)
 
     def run(self, plan: BuildPlan, command: str, *, timeout_minutes: float | None = None) -> RunResult:
         self.commands.append(command)
@@ -82,6 +119,8 @@ class MemorySandbox:
             old, new = self.snapshot.get(path, ""), after.get(path, "")
             if old != new:
                 chunks.append(f"diff --git a/{path} b/{path}\n")
+                if path not in self.snapshot:
+                    chunks.append("new file mode 100644\n")
                 chunks.extend(
                     difflib.unified_diff(
                         old.splitlines(keepends=True), new.splitlines(keepends=True), f"a/{path}", f"b/{path}"
@@ -95,6 +134,20 @@ class MemorySandbox:
             for p in self._workdir.rglob("*")
             if p.is_file()
         }
+
+
+class FakeReviewer:
+    def __init__(self, verdict: Verdict = Verdict.ACCEPT) -> None:
+        self.verdict = verdict
+        self.requests: list[ReviewRequest] = []
+
+    def review(self, request: ReviewRequest) -> ReviewResult:
+        self.requests.append(request)
+        reasons = [] if self.verdict is Verdict.ACCEPT else ["likely_merged: the change is too clever"]
+        return ReviewResult(self.verdict, {}, reasons, "1", "fake-model", {}, 0.05)
+
+
+ACCEPT = FakeReviewer()
 
 
 @pytest.fixture
@@ -134,7 +187,7 @@ def factory(source: Path = FIXTURES / "maven-sample", **kwargs: object) -> objec
     boxes: list[MemorySandbox] = []
 
     def make(attempt_id: int, settings: SandboxSettings) -> MemorySandbox:
-        box = MemorySandbox(attempt_id, settings, source, **kwargs)  # type: ignore[arg-type]
+        box = MemorySandbox(attempt_id, settings, source, **kwargs)
         boxes.append(box)
         return box
 
@@ -147,9 +200,9 @@ def test_issue_to_diff_with_fake_agent(ledger: Ledger, config: Config) -> None:
     attempt_id = eligible(gh, ledger)
     agent = FakeAgent(files=dict(FIX), commands=["mvn -o test"], spend_usd=0.25)
     make = factory()
-    outcome = run_attempt(gh, ledger, config, attempt_id, agent, sandbox_factory=make)  # type: ignore[arg-type]
+    outcome = run_attempt(gh, ledger, config, attempt_id, agent, reviewer=ACCEPT, sandbox_factory=make)
 
-    assert outcome.state is AttemptState.WORKING
+    assert outcome.state is AttemptState.AWAITING_APPROVAL, outcome.reason
     assert outcome.result is not None
     diff = outcome.result.diff
     assert "+        return Math.addExact(a, b);" in diff
@@ -158,20 +211,31 @@ def test_issue_to_diff_with_fake_agent(ledger: Ledger, config: Config) -> None:
 
     [box] = make.boxes  # type: ignore[attr-defined]
     assert box.cloned == (REPO, "c0ffee")
-    assert box.commands == ["baseline:15", "mvn -o test"]
+    assert box.commands == ["baseline:15", "mvn -o test", "tests:pass", "tests:fail"]
     [seen] = agent.seen
     assert seen.issue_title == "Calculator.add returns the wrong sum"
     assert seen.test_command.endswith("-o test")
 
     details = ledger.attempt_details(attempt_id)
-    assert details["state"] == "working"
-    assert details["spend_usd"] == 0.25
+    assert details["state"] == "awaiting_approval"
+    assert details["diff"] == diff
+    assert details["explanation"] == "Applied the predefined patch."
+    assert details["commands"] == [{"command": "mvn -o test", "exit_code": 0, "timed_out": False}]
+    assert [r["rule"] for r in details["verification"]] == [
+        "baseline", "tests_pass", "tests_fail_without_fix", "scope", "linters",
+    ]  # fmt: skip
+    assert all(r["passed"] for r in details["verification"])
+    assert details["review_verdict"] == "accept"
+    assert details["review_reasons"]["rubric_version"] == "1"
+    states = [t.to_state for t in ledger.transitions(attempt_id)]
+    assert states[-3:] == [AttemptState.WORKING, AttemptState.SELF_REVIEWED, AttemptState.AWAITING_APPROVAL]
+    assert details["spend_usd"] == pytest.approx(0.30)  # agent 0.25 + review 0.05
     assert details["branch"] == "mergeworthy/issue-12"
     assert details["diff_stats"]["files"] == sorted(FIX)
     assert details["test_results"]["baseline"]["exit_code"] == 0
     assert details["diff_stats"]["test_files"] == ["src/test/java/example/OverflowTest.java"]
     assert details["diff_stats"]["lines_changed_excluding_tests"] == 2
-    assert "agent started on main at c0ffee" in ledger.transitions(attempt_id)[-1].reason
+    assert any("agent started on main at c0ffee" in t.reason for t in ledger.transitions(attempt_id))
 
 
 def test_issue_taken_before_start_abandons_attempt(ledger: Ledger, config: Config) -> None:
@@ -180,7 +244,9 @@ def test_issue_taken_before_start_abandons_attempt(ledger: Ledger, config: Confi
     gh.repos[REPO].issues[12] = make_issue(REPO, 12, assignees=["someone"])
     make = factory()
     with pytest.raises(NoLongerAvailable):
-        run_attempt(gh, ledger, config, attempt_id, FakeAgent(files=dict(FIX)), sandbox_factory=make)  # type: ignore[arg-type]
+        run_attempt(
+            gh, ledger, config, attempt_id, FakeAgent(files=dict(FIX)), reviewer=ACCEPT, sandbox_factory=make
+        )
     assert ledger.get_attempt(attempt_id).state is AttemptState.ABANDONED
     assert make.boxes == []  # type: ignore[attr-defined]  # no sandbox was created
 
@@ -190,14 +256,18 @@ def test_only_eligible_or_claimed_attempts_start(ledger: Ledger, config: Config)
     attempt_id = eligible(gh, ledger)
     ledger.transition(attempt_id, AttemptState.SKIPPED, "changed our mind")
     with pytest.raises(ValueError, match="starts only from eligible or claimed"):
-        run_attempt(gh, ledger, config, attempt_id, FakeAgent(files={}), sandbox_factory=factory())  # type: ignore[arg-type]
+        run_attempt(
+            gh, ledger, config, attempt_id, FakeAgent(files={}), reviewer=ACCEPT, sandbox_factory=factory()
+        )
 
 
 def test_install_failure_fails_attempt(ledger: Ledger, config: Config) -> None:
     gh = github()
     attempt_id = eligible(gh, ledger)
     agent = FakeAgent(files=dict(FIX))
-    outcome = run_attempt(gh, ledger, config, attempt_id, agent, sandbox_factory=factory(install_ok=False))  # type: ignore[arg-type]
+    outcome = run_attempt(
+        gh, ledger, config, attempt_id, agent, reviewer=ACCEPT, sandbox_factory=factory(install_ok=False)
+    )
     assert outcome.state is AttemptState.FAILED
     assert "dependency installation failed" in outcome.reason
     assert agent.seen == []
@@ -206,7 +276,9 @@ def test_install_failure_fails_attempt(ledger: Ledger, config: Config) -> None:
 def test_no_changes_fails_attempt(ledger: Ledger, config: Config) -> None:
     gh = github()
     attempt_id = eligible(gh, ledger)
-    outcome = run_attempt(gh, ledger, config, attempt_id, FakeAgent(files={}), sandbox_factory=factory())  # type: ignore[arg-type]
+    outcome = run_attempt(
+        gh, ledger, config, attempt_id, FakeAgent(files={}), reviewer=ACCEPT, sandbox_factory=factory()
+    )
     assert outcome.state is AttemptState.FAILED
     assert outcome.reason == "the agent made no changes"
 
@@ -226,7 +298,9 @@ class CrashingAgent:
 def test_budget_exceeded_fails_attempt_and_records_spend(ledger: Ledger, config: Config) -> None:
     gh = github()
     attempt_id = eligible(gh, ledger)
-    outcome = run_attempt(gh, ledger, config, attempt_id, CappedAgent(), sandbox_factory=factory())  # type: ignore[arg-type]
+    outcome = run_attempt(
+        gh, ledger, config, attempt_id, CappedAgent(), reviewer=ACCEPT, sandbox_factory=factory()
+    )
     assert outcome.state is AttemptState.FAILED
     assert "budget_exceeded" in outcome.reason
     assert ledger.attempt_details(attempt_id)["spend_usd"] == 2.05
@@ -235,7 +309,9 @@ def test_budget_exceeded_fails_attempt_and_records_spend(ledger: Ledger, config:
 def test_agent_crash_fails_attempt(ledger: Ledger, config: Config) -> None:
     gh = github()
     attempt_id = eligible(gh, ledger)
-    outcome = run_attempt(gh, ledger, config, attempt_id, CrashingAgent(), sandbox_factory=factory())  # type: ignore[arg-type]
+    outcome = run_attempt(
+        gh, ledger, config, attempt_id, CrashingAgent(), reviewer=ACCEPT, sandbox_factory=factory()
+    )
     assert outcome.state is AttemptState.FAILED
     assert "RuntimeError: CLI not found" in outcome.reason
 
@@ -276,7 +352,39 @@ def test_baseline_must_pass_in_time(ledger: Ledger, config: Config, baseline: st
     gh = github()
     attempt_id = eligible(gh, ledger)
     agent = FakeAgent(files=dict(FIX))
-    outcome = run_attempt(gh, ledger, config, attempt_id, agent, sandbox_factory=factory(baseline=baseline))  # type: ignore[arg-type]
+    outcome = run_attempt(
+        gh, ledger, config, attempt_id, agent, reviewer=ACCEPT, sandbox_factory=factory(baseline=baseline)
+    )
     assert outcome.state is AttemptState.FAILED
     assert reason in outcome.reason
     assert agent.seen == []
+
+
+def test_review_rejection_rejects_attempt(ledger: Ledger, config: Config) -> None:
+    gh = github()
+    attempt_id = eligible(gh, ledger)
+    reviewer = FakeReviewer(Verdict.REJECT)
+    agent = FakeAgent(files=dict(FIX))
+    outcome = run_attempt(gh, ledger, config, attempt_id, agent, reviewer=reviewer, sandbox_factory=factory())
+    assert outcome.state is AttemptState.REJECTED
+    assert "too clever" in outcome.reason
+    [request] = reviewer.requests
+    assert request.diff == outcome.result.diff  # type: ignore[union-attr]
+    assert request.issue_title == "Calculator.add returns the wrong sum"
+    assert not hasattr(request, "explanation")  # the reviewer never sees the agent's reasoning
+    assert ledger.attempt_details(attempt_id)["review_verdict"] == "reject"
+
+
+def test_verification_failure_fails_attempt_before_review(ledger: Ledger, config: Config) -> None:
+    gh = github()
+    attempt_id = eligible(gh, ledger)
+    reviewer = FakeReviewer()
+    make = factory(tests_pass_always=True)  # the new test passes even without the fix
+    outcome = run_attempt(
+        gh, ledger, config, attempt_id, FakeAgent(files=dict(FIX)), reviewer=reviewer, sandbox_factory=make
+    )
+    assert outcome.state is AttemptState.FAILED
+    assert "tests_fail_without_fix: tests still pass without the fix" in outcome.reason
+    assert reviewer.requests == []
+    stored = ledger.attempt_details(attempt_id)["verification"]
+    assert {r["rule"]: r["passed"] for r in stored}["tests_fail_without_fix"] is False

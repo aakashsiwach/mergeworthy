@@ -78,8 +78,8 @@ an unclear policy, an assigned issue and an issue with a linked open pull reques
 with mocks for its configuration (no shell tool, custom tool registered, budget passed).
 
 ### T6. Verification and self-review
-- [ ] `verify.py`: the five rules in architecture.md.
-- [ ] `review.py`: the rubric as a versioned prompt file; verdict and reasons stored in the ledger.
+- [x] `verify.py`: the five rules in architecture.md.
+- [x] `review.py`: the rubric as a versioned prompt file; verdict and reasons stored in the ledger.
 
 **Acceptance:** tests for each verification rule and for review verdict parsing, including malformed output.
 

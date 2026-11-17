@@ -164,12 +164,30 @@ An attempt passes verification only if:
 4. The diff is within the size limit and touches only files relevant to the issue.
 5. The project's documented linters or formatters pass.
 
+Implementation notes (`verify.py`):
+- Rule 3 applies to every change, not only bug fixes: docs/policy.md section 4 asks for tests that fail before
+  the fix and pass after it whenever the project has a test suite. The non-test changes are reverted inside a
+  container (`git show HEAD:path`, `.git` read-only), the suite must fail, the fix is written back on the host
+  as plain files, and the diff must be identical afterwards.
+- Rule 4 also rejects unsafe patches (`patch.validate_patch`), more than 15 files, and changes to CI
+  configuration, lockfiles, build wrappers and extensions, licences and governance files.
+- Rule 5 runs the linters the project configures (ruff, black, isort, flake8; Spotless, Checkstyle) on the
+  changed files, offline. A configured tool that is not installed fails the rule.
+- Diffs never include build output: clone writes `target/`, `build/`, `__pycache__/` and similar patterns
+  to `.git/info/exclude`.
+
 ## Self-review (`review.py`)
 
 A separate agent call, with no access to the first agent's reasoning, receives the issue, the diff and the
 verification results, and answers a fixed rubric: does the change solve the issue, is it the smallest
 reasonable change, does it match the project's style, are the tests meaningful, is anything outside scope,
 would a maintainer be likely to merge it. Any "no" rejects the attempt with the reason.
+
+The rubric is `src/mergeworthy/data/review_rubric.md`, versioned in its front matter; the version is stored with
+every verdict. The call uses the Messages API with a JSON schema output, `[review] model` (default
+`claude-opus-5-5`), and server-side refusal fallback. Malformed output, a refusal, a cut-off answer or an API
+error is verdict `error` and rejects the attempt (fail closed). The reviewer never sees the agent's
+explanation.
 
 ## Data model (SQLite)
 

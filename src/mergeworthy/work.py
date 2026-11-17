@@ -21,7 +21,9 @@ from mergeworthy.discover import parse_target
 from mergeworthy.eligibility import apply_decisions, check_issue, check_repository
 from mergeworthy.ledger import AttemptState, Ledger
 from mergeworthy.recheck import IssueReader, ensure_still_available
+from mergeworthy.review import Reviewer, ReviewRequest
 from mergeworthy.sandbox import BuildPlan, RunResult, Sandbox, SandboxError, SandboxSettings
+from mergeworthy.verify import verify_attempt
 
 STARTABLE = frozenset({AttemptState.ELIGIBLE, AttemptState.CLAIMED})
 _TEST_PATH = re.compile(
@@ -42,6 +44,11 @@ class WorkSandbox(Protocol):
     def run_tests(self, plan: BuildPlan, timeout_minutes: float) -> RunResult: ...
     def run(self, plan: BuildPlan, command: str, *, timeout_minutes: float | None = None) -> RunResult: ...
     def diff(self) -> str: ...
+    def root_files(self) -> set[str]: ...
+    def read_text(self, relative: str, limit: int = 1_000_000) -> str | None: ...
+    def read_bytes(self, relative: str) -> bytes | None: ...
+    def write_bytes(self, relative: str, content: bytes | None) -> None: ...
+    def restore_from_head(self, restore: list[str], remove: list[str]) -> RunResult: ...
 
 
 SandboxFactory = Callable[[int, SandboxSettings], WorkSandbox]
@@ -115,8 +122,10 @@ def run_attempt(
     attempt_id: int,
     agent: CodingAgent,
     *,
+    reviewer: Reviewer,
     sandbox_factory: SandboxFactory = default_sandbox,
 ) -> WorkOutcome:
+    """Run an attempt from ``eligible``/``claimed`` to ``awaiting_approval``, ``rejected`` or ``failed``."""
     attempt = ledger.get_attempt(attempt_id)
     if attempt.state not in STARTABLE:
         raise ValueError(
@@ -193,12 +202,66 @@ def run_attempt(
         return _fail(ledger, attempt_id, f"agent error: {type(exc).__name__}: {exc}")
 
     stats = diff_stats(result.diff)
-    ledger.update_attempt(attempt_id, spend_usd=result.spend_usd, diff_stats=stats)
+    ledger.update_attempt(
+        attempt_id,
+        spend_usd=result.spend_usd,
+        diff_stats=stats,
+        diff=result.diff,
+        explanation=result.explanation,
+        commands=[
+            {"command": c.command, "exit_code": c.exit_code, "timed_out": c.timed_out}
+            for c in result.commands
+        ],
+    )
     if result.status is not AttemptStatus.COMPLETED:
         return _fail(ledger, attempt_id, f"agent {result.status.value}: {result.error or ''}".strip(), result)
     if not result.diff.strip():
         return _fail(ledger, attempt_id, "the agent made no changes", result)
-    return WorkOutcome(attempt_id, AttemptState.WORKING, result, "diff ready for verification")
+
+    # Verification (objective rules), then self-review (a separate model call that never sees the agent's
+    # reasoning).
+    baseline_record = (ledger.attempt_details(attempt_id).get("test_results") or {}).get("baseline")
+    try:
+        report = verify_attempt(
+            box,
+            plan,
+            config,
+            diff=result.diff,
+            stats=stats,
+            baseline=baseline_record,
+            root_files=box.root_files(),
+        )
+    except SandboxError as exc:
+        return _fail(ledger, attempt_id, f"verification could not run: {exc}", result)
+    ledger.update_attempt(attempt_id, verification=report.to_dicts())
+    if not report.passed:
+        return _fail(ledger, attempt_id, f"verification failed: {report.summary()}", result)
+
+    review = reviewer.review(
+        ReviewRequest(
+            repository=full_name,
+            issue_url=issue.html_url,
+            issue_title=issue.title,
+            issue_body=issue.body,
+            diff=result.diff,
+            verification=report.to_dicts(),
+        )
+    )
+    ledger.update_attempt(
+        attempt_id,
+        review_verdict=review.verdict.value,
+        review_reasons=review.to_dict(),
+        spend_usd=result.spend_usd + review.spend_usd,
+    )
+    ledger.transition(
+        attempt_id, AttemptState.SELF_REVIEWED, f"verification passed; self-review: {review.verdict.value}"
+    )
+    if not review.accepted:
+        reason = f"self-review {review.verdict.value}: " + "; ".join(review.reasons)
+        ledger.transition(attempt_id, AttemptState.REJECTED, reason)
+        return WorkOutcome(attempt_id, AttemptState.REJECTED, result, reason)
+    ledger.transition(attempt_id, AttemptState.AWAITING_APPROVAL, "verified and accepted by self-review")
+    return WorkOutcome(attempt_id, AttemptState.AWAITING_APPROVAL, result, "ready for human approval")
 
 
 # --- planning (read-only) -----------------------------------------------------------------------------------
@@ -232,7 +295,9 @@ class WorkPlan:
             f"run the coding agent ({config.agent.model}) with at most "
             f"${config.budget.max_spend_usd_per_attempt:.2f}, "
             f"{config.budget.max_minutes_per_attempt} minutes and {config.agent.max_turns} turns",
-            "record the diff for verification and self-review; nothing is sent to GitHub",
+            "verify the change (tests with and without the fix, scope, linters), then self-review "
+            f"with {config.review.model}",
+            "leave it waiting for your approval (`mergeworthy review`); nothing is sent to GitHub",
         ]
 
 

@@ -41,6 +41,19 @@ OUTPUT_LIMIT = 20_000
 _REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
 _COMMIT = re.compile(r"^[0-9a-f]{7,40}$")
 GIT = "git -c safe.directory='*'"
+
+# Build and tool output that must never show up in a diff as new files, even when a repository does not ignore
+# it. Written to .git/info/exclude by mergeworthy's own git commands; excludes only affect untracked files.
+BUILD_OUTPUT_PATTERNS = (
+    "target/", "build/", "out/", ".gradle/", "__pycache__/", "*.py[cod]", "*.egg-info/", ".eggs/",
+    ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".nox/", ".venv/", "dist/", "*.class",
+    ".coverage", "htmlcov/",
+)  # fmt: skip
+EXCLUDE_BUILD_OUTPUT = (
+    "mkdir -p .git/info && printf '%s\\n' "
+    + " ".join(f"'{p}'" for p in BUILD_OUTPUT_PATTERNS)
+    + " >> .git/info/exclude"
+)
 PYTHON_TEST_EXTRAS = ("test", "tests", "testing", "dev")
 MAX_FETCH_ROUNDS = 3
 
@@ -424,6 +437,7 @@ class Sandbox:
                 f"{GIT} -c core.symlinks=false clone --quiet --no-checkout {url} {REPO_DIR}",
                 f"cd {REPO_DIR}",
                 "git config core.symlinks false",
+                EXCLUDE_BUILD_OUTPUT,
                 f"{GIT} checkout --quiet {commit}",
             ]
         )
@@ -443,6 +457,7 @@ class Sandbox:
                 "set -e",
                 f"{GIT} init --quiet",
                 "git config core.symlinks false",
+                EXCLUDE_BUILD_OUTPUT,
                 f"{GIT} add --all",
                 f"{GIT} -c user.name=mergeworthy -c user.email=mergeworthy@localhost commit -q -m baseline",
             ]
@@ -494,6 +509,38 @@ class Sandbox:
             return None
         with path.open("rb") as handle:
             return handle.read(limit).decode("utf-8", errors="replace")
+
+    def read_bytes(self, relative: str) -> bytes | None:
+        path = self.resolve(relative)
+        if not path.is_file() or path.is_symlink():
+            return None
+        return path.read_bytes()
+
+    def write_bytes(self, relative: str, content: bytes | None) -> None:
+        """Write (or, with ``None``, delete) a plain file in the working copy. Never under ``.git``."""
+        path = self.resolve(relative)
+        if ".git" in path.relative_to(self.workdir).parts:
+            raise SandboxError(f"refusing to write under .git: {relative!r}")
+        if content is None:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink():
+            path.unlink()
+        path.write_bytes(content)
+
+    def restore_from_head(self, restore: list[str], remove: list[str]) -> RunResult:
+        """Put ``restore`` back to their committed content and delete ``remove``, inside a container (git
+        reads the object store; ``.git`` stays read-only)."""
+        lines = ["set -e"]
+        for path in restore:
+            quoted = shlex.quote(path)
+            lines.append(
+                f'mkdir -p "$(dirname {quoted})" && {GIT} show {shlex.quote("HEAD:" + path)} > {quoted}'
+            )
+        lines.extend(f"rm -f {shlex.quote(path)}" for path in remove)
+        return self._run(self.settings.git_image, "\n".join(lines), network=False, timeout_seconds=300)
 
     # build and run
 

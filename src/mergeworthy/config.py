@@ -71,6 +71,12 @@ class AgentSettings(_Model):
     max_turns: int = Field(default=80, ge=1)
 
 
+class ReviewSettings(_Model):
+    """Self-review (``review.py``)."""
+
+    model: str = Field(default="claude-opus-5-5", min_length=1)
+
+
 class Budget(_Model):
     """Hard caps for one attempt."""
 
@@ -104,6 +110,7 @@ class Config(_Model):
     eligibility: Eligibility = Field(default_factory=Eligibility)
     budget: Budget = Field(default_factory=Budget)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    review: ReviewSettings = Field(default_factory=ReviewSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
 
     @field_validator("languages")

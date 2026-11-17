@@ -96,3 +96,19 @@ def require_valid(diff: str, expected_files: list[str] | None = None) -> PatchRe
     if not report.ok:
         raise PatchError("; ".join(report.problems))
     return report
+
+
+def file_changes(diff: str) -> dict[str, str]:
+    """Map each file in a validated diff to ``added``, ``deleted`` or ``modified``."""
+    changes: dict[str, str] = {}
+    current: str | None = None
+    for line in diff.splitlines():
+        header = _HEADER.match(line)
+        if header:
+            current = header.group(2)
+            changes[current] = "modified"
+        elif current is not None and line.startswith("new file mode"):
+            changes[current] = "added"
+        elif current is not None and line.startswith("deleted file mode"):
+            changes[current] = "deleted"
+    return changes

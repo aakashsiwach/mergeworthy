@@ -8,6 +8,7 @@ from there; any failure here moves the attempt to ``failed`` with the reason.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from mergeworthy.discover import parse_target
 from mergeworthy.eligibility import apply_decisions, check_issue, check_repository
 from mergeworthy.gitops import branch_name
 from mergeworthy.ledger import AttemptState, Ledger
+from mergeworthy.provider import redact
 from mergeworthy.recheck import IssueReader, ensure_still_available
 from mergeworthy.review import Reviewer, ReviewRequest
 from mergeworthy.sandbox import BuildPlan, RunResult, Sandbox, SandboxError, SandboxSettings
@@ -113,6 +115,7 @@ def diff_stats(diff: str) -> dict[str, Any]:
 
 
 def _fail(ledger: Ledger, attempt_id: int, reason: str, result: AttemptResult | None = None) -> WorkOutcome:
+    reason = redact(reason, os.environ)  # provider secrets never reach the ledger
     ledger.transition(attempt_id, AttemptState.FAILED, reason)
     return WorkOutcome(attempt_id, AttemptState.FAILED, result, reason)
 

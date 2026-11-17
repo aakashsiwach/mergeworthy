@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import posixpath
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, cast
@@ -217,9 +217,21 @@ QueryFn = Callable[..., AsyncIterator[Any]]
 
 
 class ClaudeCodingAgent:
-    def __init__(self, *, model: str = DEFAULT_MODEL, query_fn: QueryFn = query) -> None:
+    def __init__(
+        self,
+        *,
+        model: str = DEFAULT_MODEL,
+        provider_env: Mapping[str, str] | None = None,
+        query_fn: QueryFn = query,
+    ) -> None:
+        """``provider_env`` comes from ``provider.agent_environment``: Bedrock settings and AWS credentials
+        for the agent process only. It is never logged, stored or passed to the sandbox."""
         self.model = model
+        self._provider_env = dict(provider_env or {})
         self._query = query_fn
+
+    def __repr__(self) -> str:
+        return f"ClaudeCodingAgent(model={self.model!r})"
 
     def build_options(
         self, task: Task, workdir: Path, sandbox: AgentSandbox, budget: Budget, log: CommandLog
@@ -246,6 +258,8 @@ class ClaudeCodingAgent:
             max_turns=budget.max_turns,
             max_budget_usd=budget.max_spend_usd,
             env={
+                **self._provider_env,
+                # Always last, so nothing can hand the agent a GitHub token.
                 **dict.fromkeys(BLANKED_ENV, ""),
                 "CLAUDE_AGENT_SDK_CLIENT_APP": f"mergeworthy/{__version__}",
             },

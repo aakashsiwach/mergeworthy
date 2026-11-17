@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,6 +33,7 @@ from mergeworthy.followup import FollowupReader, follow_up
 from mergeworthy.github import GitHubClient, GitHubError
 from mergeworthy.gitops import Git, GitError
 from mergeworthy.ledger import AttemptState, Decision, Ledger, LedgerError
+from mergeworthy.provider import agent_environment
 from mergeworthy.recheck import AwaitingHumanDecision, NoLongerAvailable
 from mergeworthy.review import ClaudeReviewer, Reviewer
 from mergeworthy.sandbox import SandboxError, docker_available
@@ -227,7 +229,8 @@ def make_agent(config: Config) -> CodingAgent:
     """The real coding agent. Imported lazily so read-only commands never load the SDK."""
     from mergeworthy.agent.claude import ClaudeCodingAgent
 
-    return ClaudeCodingAgent(model=config.provider.agent)
+    env = agent_environment(config, os.environ)
+    return ClaudeCodingAgent(model=config.provider.agent, provider_env=env)
 
 
 def make_reviewer(config: Config) -> Reviewer:

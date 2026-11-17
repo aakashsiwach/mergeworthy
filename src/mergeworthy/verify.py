@@ -236,6 +236,42 @@ def detect_linters(
     return checks
 
 
+DOC_SUFFIXES = (".md", ".rst")
+
+
+def is_documentation_only(files: list[str]) -> bool:
+    """True when every changed file is documentation: ``*.md``, ``*.rst`` or anything under ``docs/``."""
+    return bool(files) and all(f.lower().endswith(DOC_SUFFIXES) or f.startswith("docs/") for f in files)
+
+
+def detect_docs_build(root_files: set[str], read: Callable[[str], str | None]) -> LintCheck | None:
+    """The project's documentation build, if one is configured (MkDocs or Sphinx), in strict mode."""
+    for name in ("mkdocs.yml", "mkdocs.yaml"):
+        if name in root_files:
+            return LintCheck(
+                "mkdocs", f"mkdocs build --strict --config-file {name} --site-dir /tmp/mergeworthy-site"
+            )
+    for conf in ("docs/conf.py", "doc/conf.py", "docs/source/conf.py"):
+        if read(conf) is not None:
+            source = conf.rsplit("/", 1)[0]
+            return LintCheck("sphinx", f"python -m sphinx -W -b html {source} /tmp/mergeworthy-docs")
+    return None
+
+
+def rule_docs_build(sandbox: VerifySandbox, plan: BuildPlan, check: LintCheck | None) -> RuleResult:
+    if check is None:
+        return RuleResult("docs_build", True, "no documentation build configured")
+    result = sandbox.run(plan, check.command)
+    details = {"tool": check.tool, "exit_code": result.exit_code, "timed_out": result.timed_out}
+    if result.exit_code == NOT_FOUND:
+        return RuleResult("docs_build", False, f"{check.tool} is configured but not installed", details)
+    if not result.ok:
+        return RuleResult(
+            "docs_build", False, f"{check.tool} build fails: {result.output[-300:].strip()}", details
+        )
+    return RuleResult("docs_build", True, f"{check.tool} build passes", details)
+
+
 def rule_linters(sandbox: VerifySandbox, plan: BuildPlan, checks: list[LintCheck]) -> RuleResult:
     if not checks:
         return RuleResult("linters", True, "no linters or formatters configured for the changed files")
@@ -270,7 +306,16 @@ def verify_attempt(
         # An unsafe or oversized patch is not worth running tests for.
         return VerificationReport([*rules, scope])
     rules.append(rule_tests_pass(sandbox.run_tests(plan, minutes)))
-    rules.append(rule_tests_fail_without_fix(sandbox, plan, diff, stats, minutes))
+    files: list[str] = stats.get("files", [])
+    if is_documentation_only(files):
+        rules.append(
+            RuleResult(
+                "tests_fail_without_fix", True, "documentation-only change: exempt (docs/policy.md section 4)"
+            )
+        )
+        rules.append(rule_docs_build(sandbox, plan, detect_docs_build(root_files, sandbox.read_text)))
+    else:
+        rules.append(rule_tests_fail_without_fix(sandbox, plan, diff, stats, minutes))
     rules.append(scope)
     checks = detect_linters(root_files, sandbox.read_text, stats.get("files", []), plan.ecosystem)
     rules.append(rule_linters(sandbox, plan, checks))

@@ -168,7 +168,9 @@ Implementation notes (`verify.py`):
 - Rule 3 applies to every change, not only bug fixes: docs/policy.md section 4 asks for tests that fail before
   the fix and pass after it whenever the project has a test suite. The non-test changes are reverted inside a
   container (`git show HEAD:path`, `.git` read-only), the suite must fail, the fix is written back on the host
-  as plain files, and the diff must be identical afterwards.
+  as plain files, and the diff must be identical afterwards. A documentation-only change (`*.md`, `*.rst`,
+  `docs/`) is exempt; instead the project's documentation build (MkDocs `--strict` or Sphinx `-W`) must
+  pass when one is configured (rule `docs_build`).
 - Rule 4 also rejects unsafe patches (`patch.validate_patch`), more than 15 files, and changes to CI
   configuration, lockfiles, build wrappers and extensions, licences and governance files.
 - Rule 5 runs the linters the project configures (ruff, black, isort, flake8; Spotless, Checkstyle) on the

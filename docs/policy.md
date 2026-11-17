@@ -51,7 +51,9 @@ Raising a limit is a deliberate configuration change, recorded in the ledger.
 ## 4. What every pull request must contain
 
 - A fix limited to the issue's scope, following the project's style and conventions.
-- Tests that fail before the fix and pass after it, when the project has a test suite.
+- Tests that fail before the fix and pass after it, when the project has a test suite. Exception: a
+  change that touches only documentation (`*.md`, `*.rst` or files under `docs/`) needs no new test, but
+  the project's documentation build must pass when one is configured.
 - The project's own checks passing locally in the sandbox (tests, linters, formatters it documents).
 - A description that links the issue, explains the change and how it was tested.
 - **AI disclosure:** a short statement that the change was prepared with AI assistance and reviewed and

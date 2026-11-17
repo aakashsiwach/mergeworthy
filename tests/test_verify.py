@@ -7,8 +7,11 @@ from mergeworthy.config import Config
 from mergeworthy.sandbox import BuildPlan, RunResult
 from mergeworthy.verify import (
     LintCheck,
+    detect_docs_build,
     detect_linters,
+    is_documentation_only,
     rule_baseline,
+    rule_docs_build,
     rule_linters,
     rule_scope,
     rule_tests_fail_without_fix,
@@ -328,3 +331,90 @@ def test_verify_attempt_stops_before_tests_for_unsafe_scope() -> None:
     assert not report.passed
     assert [r.rule for r in report.rules] == ["baseline", "scope"]
     assert box.runs == []
+
+
+# --- documentation-only changes -----------------------------------------------------------------------------
+
+DOCS_DIFF = (
+    "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-Helo\n+Hello\n"
+    "diff --git a/docs/usage.txt b/docs/usage.txt\n--- a/docs/usage.txt\n+++ b/docs/usage.txt\n"
+    "@@ -1 +1 @@\n-a\n+b\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        (["README.md"], True),
+        (["docs/index.rst", "CHANGES.RST"], True),
+        (["docs/conf.py"], True),  # anything under docs/
+        (["README.md", "src/app.py"], False),
+        (["tests/test_docs.md.py"], False),
+        ([], False),
+    ],
+)
+def test_is_documentation_only(files: list[str], expected: bool) -> None:
+    assert is_documentation_only(files) is expected
+
+
+def test_docs_only_change_is_exempt_and_runs_docs_build() -> None:
+    box = FakeSandbox({}, {"mkdocs.yml": "site_name: x"}, DOCS_DIFF)
+    report = verify_attempt(
+        box,
+        PLAN,
+        CONFIG,
+        diff=DOCS_DIFF,
+        stats=diff_stats(DOCS_DIFF),
+        baseline={"exit_code": 0},
+        root_files={"mkdocs.yml"},
+    )
+    assert report.passed, report.summary()
+    rules = {r.rule: r for r in report.rules}
+    assert "exempt" in rules["tests_fail_without_fix"].reason
+    assert rules["docs_build"].reason == "mkdocs build passes"
+    assert any(run.startswith("mkdocs build --strict") for run in box.runs)
+
+
+def test_docs_build_failure_fails_verification() -> None:
+    box = FakeSandbox({}, {}, DOCS_DIFF)
+    box.lint_results = {"python -m sphinx": fail("WARNING: undefined label")}
+    box.files["docs/conf.py"] = "project = 'x'"
+    report = verify_attempt(
+        box,
+        PLAN,
+        CONFIG,
+        diff=DOCS_DIFF,
+        stats=diff_stats(DOCS_DIFF),
+        baseline={"exit_code": 0},
+        root_files=set(),
+    )
+    assert not report.passed
+    assert "sphinx build fails: WARNING: undefined label" in report.summary()
+
+
+def test_docs_only_without_docs_build_passes() -> None:
+    box = FakeSandbox({}, {}, DOCS_DIFF)
+    report = verify_attempt(
+        box,
+        PLAN,
+        CONFIG,
+        diff=DOCS_DIFF,
+        stats=diff_stats(DOCS_DIFF),
+        baseline={"exit_code": 0},
+        root_files=set(),
+    )
+    assert report.passed
+    assert {r.rule: r.reason for r in report.rules}["docs_build"] == "no documentation build configured"
+
+
+def test_detect_docs_build() -> None:
+    assert detect_docs_build({"mkdocs.yaml"}, lambda p: None).tool == "mkdocs"  # type: ignore[union-attr]
+    sphinx = detect_docs_build(set(), lambda p: "x" if p == "docs/source/conf.py" else None)
+    assert sphinx is not None and sphinx.command.endswith("docs/source /tmp/mergeworthy-docs")
+    assert detect_docs_build(set(), lambda p: None) is None
+    box = FakeSandbox({}, {}, "")
+    box.lint_results = {"mkdocs": fail("mkdocs: not found", code=127)}
+    assert (
+        "not installed"
+        in rule_docs_build(box, PLAN, detect_docs_build({"mkdocs.yml"}, lambda p: None)).reason
+    )

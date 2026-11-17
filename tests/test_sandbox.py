@@ -10,6 +10,7 @@ from mergeworthy.sandbox import (
     SandboxError,
     SandboxSettings,
     detect_build,
+    maven_fetch_script,
     maven_offline_missing,
     trim,
 )
@@ -319,7 +320,7 @@ def test_maven_fetches_missing_artifacts_then_reruns_offline(tmp_path: Path) -> 
     networks = [call[call.index("--network") + 1] for call in docker.calls]
     assert networks == ["none", "bridge", "none"]
     fetch = docker.calls[1][-1]
-    assert "dependency:get" in fetch and "surefire-junit-platform:3.5.2:jar" in fetch
+    assert "maven-dependency-plugin:3.11.0:get" in fetch and "surefire-junit-platform:3.5.2:jar" in fetch
     assert "mvn -o test" not in fetch  # the fetch step runs no tests
 
 
@@ -335,3 +336,35 @@ def test_fetch_rounds_are_bounded(tmp_path: Path) -> None:
     box = sandbox(tmp_path, docker)
     assert not box.run_tests(BuildPlan("maven", "m", "i", "t"), timeout_minutes=5).ok
     assert len(docker.calls) == 1 + 2 * 3
+
+
+def test_maven_fetch_never_loads_the_project(tmp_path: Path) -> None:
+    script = maven_fetch_script(["org.apache.maven.surefire:surefire-junit-platform:3.5.2:jar"])
+    assert "cd /tmp" in script
+    assert "./mvnw" not in script and "/work/repo" not in script
+    assert "export MAVEN_SKIP_RC=1 HOME=/tmp/mergeworthy-home" in script
+    assert "-s /tmp/mergeworthy-settings.xml -gs /tmp/mergeworthy-settings.xml" in script
+    assert "org.apache.maven.plugins:maven-dependency-plugin:3.11.0:get" in script
+    assert "-DremoteRepositories=central::default::https://repo.maven.apache.org/maven2 " in script
+    assert "-Dmaven.repo.local=/tmp/mergeworthy-m2 " in script  # fresh repository, not the shared one
+    assert script.rstrip().endswith("cp -R -n /tmp/mergeworthy-m2/. /work/deps/m2/")
+    assert "-Dartifact=org.apache.maven.surefire:surefire-junit-platform:3.5.2:jar" in script
+
+
+def test_maven_fetch_rejects_odd_coordinates() -> None:
+    with pytest.raises(SandboxError, match="not a Maven coordinate"):
+        maven_fetch_script(["g:a:1.0:jar; curl evil"])
+
+
+def test_maven_fetch_container_has_no_repository_mount(tmp_path: Path) -> None:
+    docker = FakeDocker([(1, MISSING, False), (0, "", False), (0, "ok", False)])
+    box = sandbox(tmp_path, docker)
+    (box.workdir / ".git").mkdir()
+    box.run_tests(BuildPlan("maven", "m", "i", "mvn -o test"), timeout_minutes=5)
+    fetch = docker.calls[1]
+    assert fetch[fetch.index("--network") + 1] == "bridge"
+    assert fetch[fetch.index("--workdir") + 1] == "/tmp"
+    mounts = [fetch[i + 1] for i, a in enumerate(fetch) if a == "--mount"]
+    assert mounts == [f"type=volume,source={box.volume},target=/work/deps"]
+    tests_run = docker.calls[0]
+    assert any("target=/work/repo/.git,readonly" in a for a in tests_run)

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -49,6 +50,41 @@ _MAVEN_OFFLINE_MISSING = re.compile(
     r"The following artifacts could not be resolved: (.+?): Cannot access \S+ \(\S+\) in offline mode"
 )
 _MAVEN_COORDINATE = re.compile(r"^[\w.-]+:[\w.-]+:[\w.-]+(?::[\w.-]+)?:[\w.-]+$")
+
+
+MAVEN_CENTRAL = "central::default::https://repo.maven.apache.org/maven2"
+DEPENDENCY_PLUGIN = "org.apache.maven.plugins:maven-dependency-plugin:3.11.0"
+
+
+def maven_fetch_script(coordinates: list[str]) -> str:
+    """Download exact artifacts from Maven Central without loading anything from the project.
+
+    Runs with network access, so it must not touch project-controlled input: the container gets no repository
+    mount and runs in ``/tmp`` (no ``pom.xml``, no ``.mvn/extensions.xml`` or ``maven.config``), uses the
+    image's ``mvn`` (never ``./mvnw``), skips ``~/.mavenrc`` (``MAVEN_SKIP_RC``) under a fresh ``HOME``, uses
+    empty user and global settings, and resolves into a fresh local repository so a plugin planted in the
+    shared one during installation is never loaded. Fetched artifacts are then copied into the shared
+    repository without overwriting anything.
+    """
+    for spec in coordinates:
+        if not _MAVEN_COORDINATE.match(spec):
+            raise SandboxError(f"not a Maven coordinate: {spec!r}")
+    fresh = "/tmp/mergeworthy-m2"
+    settings = "/tmp/mergeworthy-settings.xml"
+    lines = [
+        "set -e",
+        "export MAVEN_SKIP_RC=1 HOME=/tmp/mergeworthy-home MAVEN_ARGS= MAVEN_OPTS=",
+        'mkdir -p "$HOME"',
+        f"printf '<settings/>' > {settings}",
+        "cd /tmp",
+    ]
+    for spec in coordinates:
+        lines.append(
+            f"mvn -B -q -s {settings} -gs {settings} -Dmaven.repo.local={fresh} {DEPENDENCY_PLUGIN}:get"
+            f" -DremoteRepositories={MAVEN_CENTRAL} -Dtransitive=true -Dartifact={shlex.quote(spec)}"
+        )
+    lines.append(f"mkdir -p {M2} && cp -R -n {fresh}/. {M2}/")
+    return "\n".join(lines)
 
 
 def maven_offline_missing(output: str) -> list[str]:
@@ -482,13 +518,13 @@ class Sandbox:
             missing = maven_offline_missing(result.output) if plan.ecosystem == "maven" else []
             if result.ok or not missing:
                 break
-            mvn = "./mvnw" if (self.workdir / "mvnw").is_file() else "mvn"
-            fetch = "set -e\n" + "\n".join(
-                f"{mvn} -B -q -Dmaven.repo.local={M2} dependency:get -Dtransitive=true -Dartifact={spec}"
-                for spec in missing
-            )
             fetched = self._run(
-                plan.image, fetch, network=True, timeout_seconds=self.settings.install_timeout_minutes * 60
+                plan.image,
+                maven_fetch_script(missing),
+                network=True,
+                timeout_seconds=self.settings.install_timeout_minutes * 60,
+                mount_repo=False,
+                workdir="/tmp",
             )
             if not fetched.ok:
                 return RunResult(fetched.exit_code, fetched.output, fetched.timed_out, fetched.seconds)

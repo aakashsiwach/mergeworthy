@@ -147,8 +147,11 @@ example a planted `core.fsmonitor`, `core.pager`, alias or hook that runs when g
   memory and process limits. Install and clone use the network; tests and agent commands use
   `--network none`.
 - Maven resolves some artifacts (such as surefire's test provider) only when tests run. If the offline
-  run reports them missing, exactly those are fetched with `dependency:get` (network on, no project
-  code), and the tests run offline again, up to three times.
+  run reports them missing, exactly those coordinates are fetched with a pinned
+  `maven-dependency-plugin:get` from Maven Central only, and the tests run offline again, up to three times.
+  The fetch container never sees the project: no repository mount, working directory `/tmp`, the image's
+  `mvn` (not `./mvnw`), `MAVEN_SKIP_RC` with a fresh `HOME`, empty settings, and a fresh local
+  repository whose artifacts are copied into the shared one without overwriting.
 - Default images: `python:3.12` (the full image, because many test suites call `git`),
   `maven:3.9-eclipse-temurin-21`, `gradle:8-jdk21`; configurable under `[sandbox]`.
 

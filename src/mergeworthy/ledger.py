@@ -243,12 +243,34 @@ def _migration_5(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_6(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        -- Follow-up actions drafted for a human: replies, fix attempts, closing.
+        -- Nothing is sent without approval.
+        CREATE TABLE drafts (
+            id          INTEGER PRIMARY KEY,
+            attempt_id  INTEGER NOT NULL REFERENCES attempts(id),
+            kind        TEXT NOT NULL CHECK (kind IN ('reply', 'fix', 'close')),
+            source      TEXT NOT NULL,       -- what prompted it, e.g. comment:123, review:5, ci:<sha>
+            context     TEXT NOT NULL,       -- JSON: the comment, failing checks, ...
+            body        TEXT,                -- proposed text, written or edited by a human before approval
+            status      TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'approved', 'rejected', 'sent')),
+            created_at  TEXT NOT NULL,
+            UNIQUE (attempt_id, source)
+        );
+        """
+    )
+
+
 MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _migration_1,
     _migration_2,
     _migration_3,
     _migration_4,
     _migration_5,
+    _migration_6,
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -572,6 +594,23 @@ class Ledger:
                 f"UPDATE pull_requests SET {sets}, updated_at = ? WHERE id = ?",
                 (*fields.values(), _now(), pr_id),
             )
+
+    def add_draft(
+        self, attempt_id: int, kind: str, source: str, context: dict[str, Any], body: str | None = None
+    ) -> bool:
+        """Store a draft once per source. Returns False if this source was already drafted."""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO drafts (attempt_id, kind, source, context, body, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (attempt_id, kind, source, json.dumps(context, sort_keys=True), body, _now()),
+            )
+            return cur.rowcount == 1
+
+    def drafts(self, status: str | None = "pending") -> list[dict[str, Any]]:
+        query = "SELECT * FROM drafts" + (" WHERE status = ?" if status else "") + " ORDER BY id"
+        rows = self._conn.execute(query, (status,) if status else ()).fetchall()
+        return [{**dict(r), "context": json.loads(r["context"])} for r in rows]
 
     def attempt_details(self, attempt_id: int) -> dict[str, Any]:
         row = self._conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()

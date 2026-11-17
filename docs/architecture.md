@@ -205,6 +205,7 @@ explanation.
 | `transitions` | attempt, from, to, reason, timestamp |
 | `pull_requests` | attempt, url, state, CI status, merged at, closed at, maintainer outcome notes |
 | `limits_log` | changes to limits, with reason |
+| `drafts` | attempt, kind (reply, fix, close), source, context, proposed body, status |
 | `human_decisions` | subject (repository or issue), check, content hash, question, allow or deny, reason |
 
 ## CLI
@@ -247,6 +248,15 @@ applies the approved diff, requires `git status` to show exactly the approved fi
 identity, pushes (token via an environment variable read by a one-off credential helper, never in argv or a
 URL), opens the pull request with the description template, and records it. If the project prescribes AI
 disclosure wording, `--disclosure` with that wording is required.
+
+`followup` only reads GitHub and never posts. For each open pull request it records state and CI status and
+moves the attempt to `in_review`, then `merged` or `closed`. A close without merge starts the repository
+cooldown (`cooldown_days_after_close`) and keeps the last maintainer comment as the outcome note. A maintainer
+saying AI contributions are unwelcome (the AI policy phrase list plus a few PR-specific phrases) puts the
+repository on the deny list at once. New maintainer comments and reviews become `reply` drafts, a failing CI
+run on the current head becomes a `fix` draft, and a request to close (or an AI complaint) becomes a `close`
+draft with a short thank-you. Drafts are stored once per source in `drafts` and wait for a human; writing and
+sending replies is not built yet.
 
 `discover` and `check` only read from GitHub. `discover` stores candidates and opens one attempt per new issue in
 `discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible`, `needs_human` or

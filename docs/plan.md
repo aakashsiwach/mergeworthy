@@ -104,9 +104,9 @@ with mocks for its configuration (no shell tool, custom tool registered, budget 
 template and dry-run output.
 
 ### T9. Follow-up
-- [ ] `followup.py`: poll submitted pull requests for CI status, comments, merge and close; update the
+- [x] `followup.py`: poll submitted pull requests for CI status, comments, merge and close; update the
       ledger; draft replies or fix attempts that go through approval again.
-- [ ] Closing with "AI contributions not welcome" or similar adds the repository to the deny list.
+- [x] Closing with "AI contributions not welcome" or similar adds the repository to the deny list.
 
 **Acceptance:** tests for each pull request outcome and for the deny-list rule.
 

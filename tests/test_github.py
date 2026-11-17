@@ -395,6 +395,9 @@ def test_client_has_no_write_methods() -> None:
         "list_issue_comments",
         "list_linked_pull_requests",
         "search_open_pull_requests_mentioning",
+        "get_pull_request",
+        "list_check_runs",
+        "list_reviews",
     }
 
 
@@ -418,3 +421,52 @@ def test_search_open_pull_requests_mentioning(client: GitHubClient, api: respx.M
     found = client.search_open_pull_requests_mentioning(REPO, 42)
     assert route.calls.last.request.url.params["q"] == f"repo:{REPO} is:pr is:open 42 in:title,body"
     assert [(m.number, m.body) for m in found] == [(8, "")]
+
+
+def test_get_pull_request(client: GitHubClient, api: respx.MockRouter) -> None:
+    api.get(f"/repos/{REPO}/pulls/7").respond(
+        json={
+            "number": 7,
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2026-11-20T10:00:00Z",
+            "closed_at": "2026-11-20T10:00:00Z",
+            "head": {"sha": "abc1234"},
+            "html_url": f"https://github.com/{REPO}/pull/7",
+        }
+    )
+    pr = client.get_pull_request(REPO, 7)
+    assert pr.merged and pr.head_sha == "abc1234" and pr.merged_at is not None
+
+
+def test_list_check_runs(client: GitHubClient, api: respx.MockRouter) -> None:
+    api.get(f"/repos/{REPO}/commits/abc1234/check-runs").respond(
+        json={
+            "total_count": 2,
+            "check_runs": [
+                {"name": "test", "status": "completed", "conclusion": "failure"},
+                {"name": "lint", "status": "in_progress", "conclusion": None},
+            ],
+        }
+    )
+    runs = client.list_check_runs(REPO, "abc1234")
+    assert [(r.name, r.conclusion) for r in runs] == [("test", "failure"), ("lint", None)]
+    with pytest.raises(ValueError, match="commit SHA"):
+        client.list_check_runs(REPO, "main; rm")
+
+
+def test_list_reviews(client: GitHubClient, api: respx.MockRouter) -> None:
+    api.get(f"/repos/{REPO}/pulls/7/reviews").respond(
+        json=[
+            {
+                "id": 1,
+                "user": {"login": "maintainer"},
+                "author_association": "MEMBER",
+                "state": "CHANGES_REQUESTED",
+                "body": "Please add a test for the empty case.",
+                "submitted_at": "2026-11-19T08:00:00Z",
+            }
+        ]
+    )
+    [review] = client.list_reviews(REPO, 7)
+    assert (review.author, review.state) == ("maintainer", "CHANGES_REQUESTED")

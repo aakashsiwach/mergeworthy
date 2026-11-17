@@ -28,6 +28,7 @@ from mergeworthy.discover import (
     record_decision,
 )
 from mergeworthy.eligibility import Report, Status
+from mergeworthy.followup import FollowupReader, follow_up
 from mergeworthy.github import GitHubClient, GitHubError
 from mergeworthy.gitops import Git, GitError
 from mergeworthy.ledger import AttemptState, Decision, Ledger, LedgerError
@@ -461,3 +462,47 @@ def submit_command(
         console.print(safe(f"paused: {exc}"), style="yellow")
         raise typer.Exit(EXIT_NEEDS_HUMAN) from exc
     console.print(safe(f"pull request #{result.number} opened: {result.url}"), style="green")
+
+
+def make_followup_client() -> FollowupReader:
+    return GitHubClient(load_secrets().github_token)
+
+
+@app.command(name="followup")
+def followup_command(config_path: ConfigOption = None) -> None:
+    """Check open pull requests and store drafts for approval. Reads GitHub only; never posts."""
+    config = _load(config_path)
+    gh = make_followup_client()
+    try:
+        with Ledger(config.ledger_path) as ledger:
+            results = follow_up(gh, ledger, config, now=datetime.now(UTC))
+            drafts = ledger.drafts()
+    except GitHubError as exc:
+        console.print(safe(f"error: {exc}"), style="red")
+        raise typer.Exit(1) from exc
+    finally:
+        close = getattr(gh, "close", None)
+        if callable(close):
+            close()
+    if not results:
+        console.print("no open pull requests")
+    for result in results:
+        console.print(
+            safe(f"attempt {result.attempt_id}: {result.url} [{result.state}, CI {result.ci_status}]")
+        )
+        for event in result.events:
+            console.print(safe(f"  - {event}"))
+    if drafts:
+        table = Table("draft", "attempt", "kind", "from", "excerpt")
+        for draft in drafts:
+            context = draft["context"]
+            excerpt = str(context.get("body") or ", ".join(context.get("failing", [])))[:80]
+            table.add_row(
+                str(draft["id"]),
+                str(draft["attempt_id"]),
+                draft["kind"],
+                safe(str(context.get("author", ""))),
+                safe(excerpt),
+            )
+        console.print(table)
+        console.print(f"{len(drafts)} drafts wait for a human; nothing was posted.")

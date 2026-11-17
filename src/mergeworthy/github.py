@@ -111,6 +111,31 @@ class LinkedPullRequest(_Model):
     html_url: str
 
 
+class PullRequestStatus(_Model):
+    number: int
+    state: str
+    merged: bool
+    merged_at: datetime | None
+    closed_at: datetime | None
+    head_sha: str
+    html_url: str
+
+
+class CheckRun(_Model):
+    name: str
+    status: str
+    conclusion: str | None
+
+
+class Review(_Model):
+    id: int
+    author: str | None
+    author_association: str
+    state: str
+    body: str
+    submitted_at: datetime | None
+
+
 class FileContent(_Model):
     path: str
     sha: str
@@ -382,6 +407,40 @@ class GitHubClient:
             )
             for item in items
             if "pull_request" in item
+        ]
+
+    def get_pull_request(self, full_name: str, number: int) -> PullRequestStatus:
+        data = self._get_json(f"/repos/{_check_repo(full_name)}/pulls/{int(number)}")
+        return PullRequestStatus(
+            number=data["number"],
+            state=data["state"],
+            merged=bool(data.get("merged")),
+            merged_at=data.get("merged_at"),
+            closed_at=data.get("closed_at"),
+            head_sha=data["head"]["sha"],
+            html_url=data["html_url"],
+        )
+
+    def list_check_runs(self, full_name: str, ref: str) -> list[CheckRun]:
+        if not re.fullmatch(r"[0-9a-f]{7,40}", ref):
+            raise ValueError(f"not a commit SHA: {ref!r}")
+        items = self._paginate(
+            f"/repos/{_check_repo(full_name)}/commits/{ref}/check-runs", items_key="check_runs"
+        )
+        return [CheckRun(name=r["name"], status=r["status"], conclusion=r.get("conclusion")) for r in items]
+
+    def list_reviews(self, full_name: str, number: int) -> list[Review]:
+        items = self._paginate(f"/repos/{_check_repo(full_name)}/pulls/{int(number)}/reviews")
+        return [
+            Review(
+                id=r["id"],
+                author=_login(r.get("user")),
+                author_association=r.get("author_association", "NONE"),
+                state=r.get("state", ""),
+                body=r.get("body") or "",
+                submitted_at=r.get("submitted_at"),
+            )
+            for r in items
         ]
 
     def get_repository(self, full_name: str) -> Repository:

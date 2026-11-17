@@ -11,6 +11,7 @@ from typing import Annotated
 
 import click
 import typer
+from pydantic import SecretStr
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -18,7 +19,7 @@ from rich.text import Text
 from mergeworthy import __version__
 from mergeworthy.agent import CodingAgent
 from mergeworthy.approve import ApprovalError, approve, reject, render_diff, render_summary, waiting_attempts
-from mergeworthy.config import Config, ConfigError, load_config, load_secrets
+from mergeworthy.config import GITHUB_TOKEN_ENV, Config, ConfigError, load_config, load_secrets
 from mergeworthy.discover import (
     CheckOutcome,
     DiscoveryReader,
@@ -28,10 +29,12 @@ from mergeworthy.discover import (
 )
 from mergeworthy.eligibility import Report, Status
 from mergeworthy.github import GitHubClient, GitHubError
+from mergeworthy.gitops import Git, GitError
 from mergeworthy.ledger import AttemptState, Decision, Ledger, LedgerError
 from mergeworthy.recheck import AwaitingHumanDecision, NoLongerAvailable
 from mergeworthy.review import ClaudeReviewer, Reviewer
 from mergeworthy.sandbox import SandboxError, docker_available
+from mergeworthy.submit import GitHubWriter, SubmissionRefused, prepare_submission, render_plan, submit
 from mergeworthy.work import STARTABLE, SandboxFactory, default_sandbox, plan_work, run_attempt
 
 # `mergeworthy work` exit codes (docs/architecture.md).
@@ -387,3 +390,74 @@ def review_command(
         except ApprovalError as exc:
             console.print(safe(f"error: {exc}"), style="red")
             raise typer.Exit(1) from exc
+
+
+def make_git() -> Git:
+    return Git()
+
+
+def make_writer(token: SecretStr, config: Config) -> GitHubWriter:
+    return GitHubWriter(token, config)
+
+
+@app.command(name="submit")
+def submit_command(
+    attempt: Annotated[int, typer.Argument(help="An approved attempt.")],
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run/--no-dry-run", help="Dry run (default): print exactly what would be sent."),
+    ] = True,
+    disclosure: Annotated[
+        str | None,
+        typer.Option("--disclosure", help="AI disclosure text, when the project prescribes wording."),
+    ] = None,
+    config_path: ConfigOption = None,
+) -> None:
+    """Submit an approved attempt as a pull request.
+
+    Dry run unless both ``dry_run = false`` in the configuration and ``--no-dry-run`` are given.
+    """
+    config = _load(config_path)
+    secrets = load_secrets()
+    git = make_git()
+    try:
+        identity = git.identity()
+        with Ledger(config.ledger_path) as ledger, _client() as gh:
+            plan = prepare_submission(
+                gh, ledger, config, attempt, identity=identity, now=datetime.now(UTC), disclosure=disclosure
+            )
+            writer = make_writer(secrets.github_token, config) if secrets.github_token else None
+            if dry_run or config.dry_run:
+                if writer is not None and writer.can_push(plan.upstream):
+                    push_repository, fork_needed = plan.upstream, False
+                else:
+                    login = writer.login() if writer is not None else "YOUR-LOGIN"
+                    push_repository, fork_needed = f"{login}/{plan.upstream.split('/')[1]}", True
+                click.echo(render_plan(plan, git, push_repository=push_repository, fork_needed=fork_needed))
+                if not dry_run and config.dry_run:
+                    console.print("dry_run = true in mergeworthy.toml, so nothing was sent", style="yellow")
+                else:
+                    console.print("nothing was sent. Run with --no-dry-run to submit.")
+                return
+            if writer is None or secrets.github_token is None:
+                console.print(f"set {GITHUB_TOKEN_ENV} to submit", style="red")
+                raise typer.Exit(1)
+            result = submit(
+                plan,
+                gh=gh,
+                writer=writer,
+                ledger=ledger,
+                config=config,
+                git=git,
+                token=secrets.github_token,
+            )
+    except (SubmissionRefused, GitError, GitHubError, ValueError) as exc:
+        console.print(safe(f"refused: {exc}"), style="red")
+        raise typer.Exit(1) from exc
+    except NoLongerAvailable as exc:
+        console.print(safe(f"abandoned: {exc}"), style="red")
+        raise typer.Exit(1) from exc
+    except AwaitingHumanDecision as exc:
+        console.print(safe(f"paused: {exc}"), style="yellow")
+        raise typer.Exit(EXIT_NEEDS_HUMAN) from exc
+    console.print(safe(f"pull request #{result.number} opened: {result.url}"), style="green")

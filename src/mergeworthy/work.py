@@ -146,7 +146,7 @@ def run_attempt(
         raise ValueError(f"{full_name} has no commits on {repo.default_branch}")
     commit = commits[0].sha
     ledger.transition(attempt_id, AttemptState.WORKING, f"agent started on {repo.default_branch} at {commit}")
-    ledger.update_attempt(attempt_id, branch=f"mergeworthy/issue-{number}")
+    ledger.update_attempt(attempt_id, branch=f"mergeworthy/issue-{number}-{attempt_id}", base_commit=commit)
 
     box = sandbox_factory(attempt_id, config.sandbox)
     try:

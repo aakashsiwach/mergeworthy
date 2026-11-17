@@ -215,7 +215,7 @@ mergeworthy check REPO_OR_ISSUE                              run eligibility che
 mergeworthy decide [SUBJECT CHECK --allow|--deny -r REASON]  list or answer questions for a human
 mergeworthy work ISSUE_URL [--dry-run/--no-dry-run]          run one attempt end to end up to approval
 mergeworthy review [ATTEMPT] [--no-pager]                    approve or reject waiting attempts
-mergeworthy submit ATTEMPT_ID                                submit an approved attempt
+mergeworthy submit ATTEMPT_ID [--no-dry-run] [--disclosure] submit an approved attempt
 mergeworthy followup                                         check open pull requests, draft replies
 mergeworthy scoreboard [--output DIR]                        build the results page
 mergeworthy replay [--split dev|test] [--final]              run the replay benchmark
@@ -236,6 +236,17 @@ checks and spend. Approve or reject both need a reason; an empty reason records 
 attempt to `approved` and pins the SHA-256 of the exact diff that was shown and its file list
 (`approved_diff_sha256`, `approved_files`); submission (T8) must send exactly that diff. Text from issues,
 repositories and models is stripped of control characters and escape sequences before display.
+
+`submit` checks every gate before writing anything: the attempt is `approved`; the repository is allowlisted,
+not denied and not in cooldown; fewer than `prs_per_week` pull requests in the last 7 days and fewer than
+`open_prs_per_repository` open ones; the stored diff has the approved SHA-256 and touches exactly the approved
+files; the issue is still available. It is a dry run, printing exactly what would be sent, unless both
+`dry_run = false` and `--no-dry-run` are given. A real run re-checks the issue, pushes to the upstream when the
+token can push there and otherwise forks, makes a fresh clean clone on the host at the attempt's base commit,
+applies the approved diff, requires `git status` to show exactly the approved files, commits as the local git
+identity, pushes (token via an environment variable read by a one-off credential helper, never in argv or a
+URL), opens the pull request with the description template, and records it. If the project prescribes AI
+disclosure wording, `--disclosure` with that wording is required.
 
 `discover` and `check` only read from GitHub. `discover` stores candidates and opens one attempt per new issue in
 `discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible`, `needs_human` or

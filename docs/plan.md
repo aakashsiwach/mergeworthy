@@ -90,13 +90,13 @@ with mocks for its configuration (no shell tool, custom tool registered, budget 
 **Acceptance:** tests drive the CLI with simulated input; rejection without a reason is refused.
 
 ### T8. Submission (dry-run by default)
-- [ ] `submit.py`: fork if needed, branch, commit using the local git identity, push, open a pull request with
+- [x] `submit.py`: fork if needed, branch, commit using the local git identity, push, open a pull request with
       a description template (issue link, change summary, how it was tested, AI disclosure from policy.md
       section 4).
-- [ ] Refuses repositories not on the allowlist. Refuses attempts not in `approved`. Dry-run prints exactly
+- [x] Refuses repositories not on the allowlist. Refuses attempts not in `approved`. Dry-run prints exactly
       what would be sent.
-- [ ] Call `recheck.ensure_still_available` immediately before forking or pushing.
-- [ ] Never push from the working copy: fresh clean clone on the host, `patch.require_valid` against the
+- [x] Call `recheck.ensure_still_available` immediately before forking or pushing.
+- [x] Never push from the working copy: fresh clean clone on the host, `patch.require_valid` against the
       approved files, apply the diff, commit and push from the clean clone (architecture.md, untrusted
       working copy rule).
 

@@ -231,11 +231,24 @@ def _migration_4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_5(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        ALTER TABLE attempts ADD COLUMN base_commit TEXT;        -- the upstream commit the change is based on
+        ALTER TABLE pull_requests ADD COLUMN repository TEXT;     -- upstream owner/name
+        ALTER TABLE pull_requests ADD COLUMN number INTEGER;
+        ALTER TABLE pull_requests ADD COLUMN head_repository TEXT;
+        ALTER TABLE pull_requests ADD COLUMN branch TEXT;
+        """
+    )
+
+
 MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _migration_1,
     _migration_2,
     _migration_3,
     _migration_4,
+    _migration_5,
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -444,6 +457,7 @@ class Ledger:
             "verification",
             "review_verdict",
             "review_reasons",
+            "base_commit",
         }
         unknown = set(fields) - allowed
         if unknown:
@@ -492,6 +506,72 @@ class Ledger:
                 (attempt_id, current.value, S.APPROVED.value, f"{reason} (diff sha256 {diff_sha256})", now),
             )
         return self.get_attempt(attempt_id)
+
+    def record_submission(
+        self,
+        attempt_id: int,
+        *,
+        repository: str,
+        number: int,
+        url: str,
+        head_repository: str,
+        branch: str,
+        reason: str,
+    ) -> int:
+        """Record the opened pull request and move the attempt from ``approved`` to ``submitted``."""
+        now = _now()
+        with self._tx() as conn:
+            current = self.get_attempt(attempt_id).state
+            if not is_allowed_transition(current, AttemptState.SUBMITTED):
+                raise InvalidTransition(attempt_id, current, AttemptState.SUBMITTED)
+            cur = conn.execute(
+                "INSERT INTO pull_requests (attempt_id, url, state, repository, number, head_repository,"
+                " branch, created_at, updated_at) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?)",
+                (attempt_id, url, repository, number, head_repository, branch, now, now),
+            )
+            conn.execute(
+                "UPDATE attempts SET state = ?, updated_at = ? WHERE id = ? AND state = ?",
+                (S.SUBMITTED.value, now, attempt_id, current.value),
+            )
+            conn.execute(
+                "INSERT INTO transitions (attempt_id, from_state, to_state, reason, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (attempt_id, current.value, S.SUBMITTED.value, reason, now),
+            )
+            return int(cur.lastrowid or 0)
+
+    def pull_requests(
+        self, *, state: str | None = None, repository: str | None = None
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM pull_requests WHERE 1 = 1"
+        params: list[Any] = []
+        if state is not None:
+            query += " AND state = ?"
+            params.append(state)
+        if repository is not None:
+            query += " AND repository = ? COLLATE NOCASE"
+            params.append(repository)
+        return [dict(row) for row in self._conn.execute(query + " ORDER BY id", params).fetchall()]
+
+    def pull_requests_since(self, since_iso: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM pull_requests WHERE created_at >= ?", (since_iso,)
+        ).fetchone()
+        return int(row[0])
+
+    def update_pull_request(self, pr_id: int, **fields: Any) -> None:
+        allowed = {"state", "ci_status", "merged_at", "closed_at", "outcome_notes"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise LedgerError(f"unknown pull request fields: {sorted(unknown)}")
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        with self._tx() as conn:
+            conn.execute(
+                f"UPDATE pull_requests SET {sets}, updated_at = ? WHERE id = ?",
+                (*fields.values(), _now(), pr_id),
+            )
 
     def attempt_details(self, attempt_id: int) -> dict[str, Any]:
         row = self._conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()

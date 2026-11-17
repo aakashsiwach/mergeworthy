@@ -235,7 +235,8 @@ def test_issue_to_diff_with_fake_agent(ledger: Ledger, config: Config) -> None:
     states = [t.to_state for t in ledger.transitions(attempt_id)]
     assert states[-3:] == [AttemptState.WORKING, AttemptState.SELF_REVIEWED, AttemptState.AWAITING_APPROVAL]
     assert details["spend_usd"] == pytest.approx(0.30)  # agent 0.25 + review 0.05
-    assert details["branch"] == "mergeworthy/issue-12"
+    assert details["branch"] == f"mergeworthy/issue-12-{attempt_id}"
+    assert details["base_commit"] == "c0ffee"
     assert details["diff_stats"]["files"] == sorted(FIX)
     assert details["test_results"]["baseline"]["exit_code"] == 0
     assert details["diff_stats"]["test_files"] == ["src/test/java/example/OverflowTest.java"]

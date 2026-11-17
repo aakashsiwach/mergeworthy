@@ -12,9 +12,17 @@ import tomllib
 from collections.abc import Iterator, Mapping
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from mergeworthy.sandbox import SandboxSettings
 
@@ -66,16 +74,65 @@ class Eligibility(_Model):
 
 
 class AgentSettings(_Model):
-    """The coding agent (Claude Agent SDK)."""
+    """The coding agent (Claude Agent SDK). The model is set in ``[provider]``."""
 
-    model: str = Field(default="claude-opus-5-5", min_length=1)
     max_turns: int = Field(default=80, ge=1)
 
 
-class ReviewSettings(_Model):
-    """Self-review (``review.py``)."""
+ANTHROPIC_DEFAULT_MODEL = "claude-opus-5-5"
+# Amazon Bedrock inference profile IDs (``us.anthropic.claude-opus-5-5``) or inference profile ARNs.
+_BEDROCK_PROFILE = re.compile(
+    r"^(?:(?:global|us|us-gov|eu|jp|au|apac)\.anthropic\.[a-z0-9.:-]+"
+    r"|arn:aws(?:-us-gov)?:bedrock:[a-z0-9-]+:\d{12}:(?:application-)?inference-profile/[A-Za-z0-9.:/_-]+)$"
+)
+_AWS_REGION = re.compile(r"^[a-z]{2}(?:-gov)?-[a-z]+-\d$")
 
-    model: str = Field(default="claude-opus-5-5", min_length=1)
+
+class Provider(_Model):
+    """Where the models run: the Claude API (``anthropic``) or Amazon Bedrock (``bedrock``).
+
+    Credentials never go here: ``ANTHROPIC_API_KEY`` for the Claude API; for Bedrock the AWS credential chain
+    (``AWS_PROFILE``, ``AWS_ACCESS_KEY_ID``/``AWS_SECRET_ACCESS_KEY``/``AWS_SESSION_TOKEN``) or
+    ``AWS_BEARER_TOKEN_BEDROCK``, all from the environment.
+    """
+
+    name: Literal["anthropic", "bedrock"] = "anthropic"
+    aws_region: str | None = None
+    agent_model: str | None = None
+    review_model: str | None = None
+
+    @field_validator("aws_region")
+    @classmethod
+    def _region(cls, value: str | None) -> str | None:
+        if value is not None and not _AWS_REGION.fullmatch(value):
+            raise ValueError(f"not an AWS region name: {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _models(self) -> Provider:
+        if self.name == "bedrock":
+            for field_name in ("agent_model", "review_model"):
+                value = getattr(self, field_name)
+                if value is None:
+                    raise ValueError(
+                        f"provider bedrock needs {field_name} set to a Bedrock inference profile ID"
+                    )
+                if not _BEDROCK_PROFILE.fullmatch(value):
+                    raise ValueError(
+                        f"{field_name} {value!r} is not a Bedrock inference profile ID (for example "
+                        "us.anthropic.claude-opus-5-5) or inference profile ARN"
+                    )
+        elif self.aws_region is not None:
+            raise ValueError("aws_region applies only to provider bedrock")
+        return self
+
+    @property
+    def agent(self) -> str:
+        return self.agent_model or ANTHROPIC_DEFAULT_MODEL
+
+    @property
+    def review(self) -> str:
+        return self.review_model or ANTHROPIC_DEFAULT_MODEL
 
 
 class ModelPrice(_Model):
@@ -94,17 +151,30 @@ def _default_prices() -> dict[str, ModelPrice]:
 
 
 class Prices(_Model):
-    """Model list prices used to estimate self-review spend. Check them against the published price list and
-    update ``checked`` when you do; the date is shown next to every spend figure."""
+    """Model list prices for one provider, used to estimate self-review spend. Check them against the
+    provider's published price list and update ``checked`` when you do; the date is shown next to every spend
+    figure. ``checked`` is empty until someone has checked."""
 
-    checked: date = date(2026, 11, 3)
-    models: dict[str, ModelPrice] = Field(default_factory=_default_prices)
+    checked: date | None = None
+    models: dict[str, ModelPrice] = Field(default_factory=dict)
 
     def cost(self, model: str, input_tokens: int, output_tokens: int) -> float | None:
         price = self.models.get(model)
         if price is None:
             return None
         return (input_tokens * price.input_per_mtok + output_tokens * price.output_per_mtok) / 1_000_000
+
+
+def _anthropic_prices() -> Prices:
+    return Prices(checked=date(2026, 11, 3), models=_default_prices())
+
+
+class ProviderPrices(_Model):
+    """``[prices.anthropic]`` and ``[prices.bedrock]``. Bedrock prices are set by AWS and are not filled in by
+    default: copy them from the Amazon Bedrock pricing page (keyed by the inference profile ID you use)."""
+
+    anthropic: Prices = Field(default_factory=_anthropic_prices)
+    bedrock: Prices = Field(default_factory=Prices)
 
 
 class Budget(_Model):
@@ -139,9 +209,9 @@ class Config(_Model):
     limits: Limits = Field(default_factory=Limits)
     eligibility: Eligibility = Field(default_factory=Eligibility)
     budget: Budget = Field(default_factory=Budget)
+    provider: Provider = Field(default_factory=Provider)
     agent: AgentSettings = Field(default_factory=AgentSettings)
-    review: ReviewSettings = Field(default_factory=ReviewSettings)
-    prices: Prices = Field(default_factory=Prices)
+    prices: ProviderPrices = Field(default_factory=ProviderPrices)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
 
     @field_validator("languages")
@@ -181,6 +251,11 @@ class Config(_Model):
         """True only if the repository is on the allowlist and not on the deny list."""
         name = full_name.lower()
         return name in self.allowlist and name not in self.deny_list
+
+    @property
+    def active_prices(self) -> Prices:
+        """The price list of the configured provider."""
+        return self.prices.bedrock if self.provider.name == "bedrock" else self.prices.anthropic
 
     def is_denied(self, full_name: str) -> bool:
         return full_name.lower() in self.deny_list

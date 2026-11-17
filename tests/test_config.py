@@ -69,16 +69,67 @@ def test_loads_values(tmp_path: Path) -> None:
     assert config.is_denied("some-org/repo.js")
 
 
-def test_prices_have_a_check_date_and_compute_cost() -> None:
-    config = parse_config(
-        {"prices": {"checked": "2027-02-01", "models": {"m": {"input_per_mtok": 3, "output_per_mtok": 15}}}}
-    )
-    assert config.prices.checked.isoformat() == "2027-02-01"
-    assert config.prices.cost("m", 1_000_000, 100_000) == pytest.approx(4.5)
-    assert config.prices.cost("unknown", 1, 1) is None
-    assert Config().prices.models["claude-opus-5-5"].output_per_mtok == 20.0
+def test_prices_per_provider_with_check_date() -> None:
+    model = {"m": {"input_per_mtok": 3, "output_per_mtok": 15}}
+    config = parse_config({"prices": {"anthropic": {"checked": "2027-02-01", "models": model}}})
+    prices = config.active_prices
+    assert prices.checked is not None and prices.checked.isoformat() == "2027-02-01"
+    assert prices.cost("m", 1_000_000, 100_000) == pytest.approx(4.5)
+    assert prices.cost("unknown", 1, 1) is None
+    defaults = Config().prices
+    assert defaults.anthropic.models["claude-opus-5-5"].output_per_mtok == 20.0
+    assert defaults.bedrock.checked is None and defaults.bedrock.models == {}  # never invented
     with pytest.raises(ConfigError, match="input_per_mtok"):
-        parse_config({"prices": {"models": {"m": {"input_per_mtok": -1, "output_per_mtok": 1}}}})
+        parse_config(
+            {"prices": {"anthropic": {"models": {"m": {"input_per_mtok": -1, "output_per_mtok": 1}}}}}
+        )
+
+
+BEDROCK = {
+    "name": "bedrock",
+    "agent_model": "us.anthropic.claude-opus-5-5",
+    "review_model": "global.anthropic.claude-opus-5-5",
+}
+
+
+def test_provider_defaults_to_anthropic() -> None:
+    provider = Config().provider
+    assert (provider.name, provider.agent, provider.review) == (
+        "anthropic",
+        "claude-opus-5-5",
+        "claude-opus-5-5",
+    )
+
+
+def test_bedrock_provider_uses_bedrock_prices() -> None:
+    bedrock_prices = {
+        "checked": "2026-11-17",
+        "models": {"us.anthropic.claude-opus-5-5": {"input_per_mtok": 1, "output_per_mtok": 2}},
+    }
+    config = parse_config(
+        {"provider": {**BEDROCK, "aws_region": "us-east-1"}, "prices": {"bedrock": bedrock_prices}}
+    )
+    assert config.provider.agent == "us.anthropic.claude-opus-5-5"
+    assert config.provider.review == "global.anthropic.claude-opus-5-5"
+    assert config.active_prices.cost("us.anthropic.claude-opus-5-5", 1_000_000, 0) == 1.0
+    arn = "arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/abc123"
+    assert parse_config({"provider": {**BEDROCK, "agent_model": arn}}).provider.agent == arn
+
+
+@pytest.mark.parametrize(
+    ("provider", "message"),
+    [
+        ({"name": "bedrock"}, "needs agent_model"),
+        ({**BEDROCK, "agent_model": "claude-opus-5-5"}, "not a Bedrock inference profile ID"),
+        ({**BEDROCK, "review_model": "anthropic.claude-opus-5-5"}, "not a Bedrock inference profile ID"),
+        ({**BEDROCK, "aws_region": "us east 1"}, "not an AWS region"),
+        ({"name": "anthropic", "aws_region": "us-east-1"}, "only to provider bedrock"),
+        ({"name": "openai"}, "name"),
+    ],
+)
+def test_invalid_provider(provider: dict[str, object], message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        parse_config({"provider": provider})
 
 
 def test_deny_list_wins_over_allowlist() -> None:

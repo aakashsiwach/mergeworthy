@@ -227,11 +227,11 @@ def make_agent(config: Config) -> CodingAgent:
     """The real coding agent. Imported lazily so read-only commands never load the SDK."""
     from mergeworthy.agent.claude import ClaudeCodingAgent
 
-    return ClaudeCodingAgent(model=config.agent.model)
+    return ClaudeCodingAgent(model=config.provider.agent)
 
 
 def make_reviewer(config: Config) -> Reviewer:
-    return ClaudeReviewer(model=config.review.model, prices=config.prices)
+    return ClaudeReviewer(model=config.provider.review, prices=config.active_prices)
 
 
 def make_sandbox_factory() -> SandboxFactory:

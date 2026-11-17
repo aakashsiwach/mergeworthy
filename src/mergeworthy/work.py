@@ -296,11 +296,11 @@ class WorkPlan:
             f"clone {self.repository.subject} at {self.default_branch} {self.commit} into a fresh sandbox",
             "install dependencies (network on), then run the baseline tests offline "
             f"(must pass within {config.eligibility.max_test_minutes} minutes)",
-            f"run the coding agent ({config.agent.model}) with at most "
+            f"run the coding agent ({config.provider.agent} on {config.provider.name}) with at most "
             f"${config.budget.max_spend_usd_per_attempt:.2f}, "
             f"{config.budget.max_minutes_per_attempt} minutes and {config.agent.max_turns} turns",
             "verify the change (tests with and without the fix, scope, linters), then self-review "
-            f"with {config.review.model}",
+            f"with {config.provider.review}",
             "leave it waiting for your approval (`mergeworthy review`); nothing is sent to GitHub",
         ]
 

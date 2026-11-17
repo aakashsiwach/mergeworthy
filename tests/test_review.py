@@ -184,3 +184,12 @@ def test_oversized_diff_is_not_sent() -> None:
     result = ClaudeReviewer(client=client).review(big)
     assert result.verdict is Verdict.ERROR
     assert client.calls == []
+
+
+def test_spend_line_says_when_prices_were_never_checked() -> None:
+    from mergeworthy.config import ModelPrice, Prices
+
+    unchecked = Prices(models={"claude-opus-5-5": ModelPrice(input_per_mtok=1, output_per_mtok=1)})
+    client = FakeClient(response(json.dumps(answers())))
+    result = ClaudeReviewer(client=client, prices=unchecked).review(REQUEST)
+    assert result.prices_checked == "prices never checked"

@@ -15,7 +15,7 @@ from functools import cache
 from importlib import resources
 from typing import Any, Protocol
 
-from mergeworthy.config import Prices
+from mergeworthy.config import Config, Prices
 
 QUESTIONS = (
     "solves_issue",
@@ -187,7 +187,7 @@ class ClaudeReviewer:
         self, *, model: str = DEFAULT_MODEL, prices: Prices | None = None, client: Any = None
     ) -> None:
         self.model = model
-        self.prices = prices or Prices()
+        self.prices = prices if prices is not None else Config().active_prices
         self._client = client
 
     def _get_client(self) -> Any:
@@ -228,7 +228,12 @@ class ClaudeReviewer:
         served_by = getattr(response, "model", None) or self.model
         cost = self.prices.cost(served_by, usage["input_tokens"], usage["output_tokens"])
         spend = cost if cost is not None else 0.0
-        checked = self.prices.checked.isoformat() if cost is not None else f"no price for {served_by}"
+        if cost is None:
+            checked = f"no price for {served_by}"
+        elif self.prices.checked is None:
+            checked = "prices never checked"
+        else:
+            checked = self.prices.checked.isoformat()
         if response.stop_reason == "refusal":
             result = error_result("the reviewer declined to review", rubric.version, served_by)
         elif response.stop_reason == "max_tokens":

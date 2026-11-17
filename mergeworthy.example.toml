@@ -63,34 +63,48 @@ max_spend_usd_per_attempt = 2.0
 # Wall-clock time in minutes.
 max_minutes_per_attempt = 30
 
-# The coding agent (Claude Agent SDK). It needs ANTHROPIC_API_KEY in the environment.
+# Where the models run. Credentials are never set here (see CONTRIBUTING.md).
+[provider]
+# "anthropic" (the Claude API, needs ANTHROPIC_API_KEY) or "bedrock" (Amazon Bedrock, needs AWS credentials).
+name = "anthropic"
+# Bedrock only: the AWS region. Optional if your AWS profile or AWS_REGION already sets one.
+# aws_region = "us-east-1"
+# Model IDs for the coding agent and for self-review. Default for "anthropic": claude-opus-5-5. Required for
+# "bedrock": inference profile IDs such as "us.anthropic.claude-opus-5-5" (or inference profile ARNs).
+# agent_model = "claude-opus-5-5"
+# review_model = "claude-opus-5-5"
+
+# The coding agent (Claude Agent SDK).
 [agent]
-# Model for the coding agent.
-model = "claude-opus-5-5"
 # Maximum agent turns per attempt (the spend and time caps in [budget] also apply).
 max_turns = 80
 
-# Self-review: a separate model call that answers the rubric in src/mergeworthy/data/review_rubric.md.
-[review]
-model = "claude-opus-5-5"
-
-# Model list prices in US dollars per million tokens, used to estimate self-review spend. The coding agent's
-# spend comes from the Agent SDK's own estimate. Check these against the published price list and update
-# `checked` when you do; the date is shown next to every spend figure.
-[prices]
+# Model list prices in US dollars per million tokens, per provider, used to estimate self-review spend. The
+# coding agent's spend comes from the Agent SDK's own estimate. Check them against the provider's published
+# price list and update `checked` when you do; the date is shown next to every spend figure.
+[prices.anthropic]
 checked = 2026-11-03
 
-[prices.models."claude-opus-5-5"]
+[prices.anthropic.models."claude-opus-5-5"]
 input_per_mtok = 4.0
 output_per_mtok = 20.0
 
-[prices.models."claude-sonnet-5-5"]
+[prices.anthropic.models."claude-sonnet-5-5"]
 input_per_mtok = 2.0
 output_per_mtok = 10.0
 
-[prices.models."claude-haiku-5-5"]
+[prices.anthropic.models."claude-haiku-5-5"]
 input_per_mtok = 0.1
 output_per_mtok = 0.5
+
+# Amazon Bedrock prices are set by AWS and are not filled in here. Copy them from the Amazon Bedrock pricing
+# page, keyed by the inference profile ID you use (regional profiles such as "us." cost more than "global."),
+# and set `checked` to the date you did. Until then spend shows "no price for <model>".
+[prices.bedrock]
+# checked = 2026-11-17
+# [prices.bedrock.models."us.anthropic.claude-opus-5-5"]
+# input_per_mtok = 0.0
+# output_per_mtok = 0.0
 
 # Docker sandbox (docs/architecture.md). Containers get no host environment variables and no secrets.
 [sandbox]

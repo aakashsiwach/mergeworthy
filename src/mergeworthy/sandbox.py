@@ -530,6 +530,19 @@ class Sandbox:
             path.unlink()
         path.write_bytes(content)
 
+    def ignored_files(self) -> list[str]:
+        """Untracked files hidden by ignore rules (including the build-output excludes), from a container."""
+        result = self._run(
+            self.settings.git_image,
+            f"{GIT} ls-files --others --ignored --exclude-standard -z",
+            network=False,
+            timeout_seconds=300,
+            limit=None,
+        )
+        if not result.ok:
+            raise SandboxError(f"could not list ignored files: {trim(result.output, 300)}")
+        return sorted(p for p in result.output.split("\0") if p.strip())
+
     def restore_from_head(self, restore: list[str], remove: list[str]) -> RunResult:
         """Put ``restore`` back to their committed content and delete ``remove``, inside a container (git
         reads the object store; ``.git`` stays read-only)."""

@@ -107,7 +107,10 @@ def render_summary(ledger: Ledger, attempt_id: int) -> str:
 
     lines += _section("Verification")
     for rule in details.get("verification") or []:
-        mark = "PASS" if rule.get("passed") else "FAIL"
+        if (rule.get("details") or {}).get("informational"):
+            mark = "NOTE"
+        else:
+            mark = "PASS" if rule.get("passed") else "FAIL"
         lines.append(f"[{mark}] {rule.get('rule')}: {clean(rule.get('reason'))}")
 
     review: dict[str, Any] = details.get("review_reasons") or {}

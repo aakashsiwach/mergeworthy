@@ -41,6 +41,7 @@ class MemorySandbox:
         self.install_ok = install_ok
         self.baseline = baseline
         self.baseline_done = False
+        self.ignored: list[str] = []
         self.tests_pass_always = tests_pass_always
         self.cloned: tuple[str, str] | None = None
         self.commands: list[str] = []
@@ -100,6 +101,9 @@ class MemorySandbox:
             path.unlink(missing_ok=True)
         else:
             path.write_bytes(content)
+
+    def ignored_files(self) -> list[str]:
+        return list(self.ignored)
 
     def restore_from_head(self, restore: list[str], remove: list[str]) -> RunResult:
         for path in restore:
@@ -223,6 +227,7 @@ def test_issue_to_diff_with_fake_agent(ledger: Ledger, config: Config) -> None:
     assert details["commands"] == [{"command": "mvn -o test", "exit_code": 0, "timed_out": False}]
     assert [r["rule"] for r in details["verification"]] == [
         "baseline", "tests_pass", "tests_fail_without_fix", "scope", "linters",
+        "untracked_build_output",
     ]  # fmt: skip
     assert all(r["passed"] for r in details["verification"])
     assert details["review_verdict"] == "accept"

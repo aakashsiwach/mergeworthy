@@ -7,6 +7,7 @@ from mergeworthy.config import Config
 from mergeworthy.sandbox import BuildPlan, RunResult
 from mergeworthy.verify import (
     LintCheck,
+    build_output_files,
     detect_docs_build,
     detect_linters,
     is_documentation_only,
@@ -16,6 +17,7 @@ from mergeworthy.verify import (
     rule_scope,
     rule_tests_fail_without_fix,
     rule_tests_pass,
+    rule_untracked_build_output,
     verify_attempt,
 )
 from mergeworthy.work import diff_stats
@@ -56,6 +58,7 @@ class FakeSandbox:
         self.tamper = False
         self.test_result: RunResult | None = None
         self.lint_results: dict[str, RunResult] = {}
+        self.ignored: list[str] = []
 
     @property
     def workdir(self) -> Path:
@@ -93,6 +96,9 @@ class FakeSandbox:
             self.files.pop(relative, None)
         else:
             self.files[relative] = content.decode()
+
+    def ignored_files(self) -> list[str]:
+        return list(self.ignored)
 
     def restore_from_head(self, restore: list[str], remove: list[str]) -> RunResult:
         if not self.restore_ok:
@@ -418,3 +424,54 @@ def test_detect_docs_build() -> None:
         "not installed"
         in rule_docs_build(box, PLAN, detect_docs_build({"mkdocs.yml"}, lambda p: None)).reason
     )
+
+
+# --- untracked files under build-output folders -----------------------------------------------------------
+
+
+def test_build_output_files_filters_generated_noise() -> None:
+    paths = [
+        "target/classes/example/Calculator.class",
+        "target/test-classes/example/OverflowTest.class",
+        "target/surefire-reports/TEST-example.OverflowTest.xml",
+        "target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst",
+        "src/__pycache__/app.cpython-312.pyc",
+        "build/notes/fix.py",
+        "target/Helper.java",
+        "pkg.egg-info/PKG-INFO",
+        "docs/build.md",  # not inside a build folder
+    ]
+    assert build_output_files(paths) == ["build/notes/fix.py", "pkg.egg-info/PKG-INFO", "target/Helper.java"]
+
+
+def test_untracked_build_output_is_reported_but_never_fails() -> None:
+    before = ["target/classes/A.class", "build/old.txt"]
+    after = [*before, "build/new_module.py", "target/test-classes/B.class"]
+    result = rule_untracked_build_output(before, after)
+    assert result.passed
+    assert result.details == {"informational": True, "files": ["build/new_module.py"]}
+    expected = "1 new untracked files under build-output folders, NOT in the diff: build/new_module.py"
+    assert expected in result.reason
+    many = rule_untracked_build_output([], [f"build/f{i}.py" for i in range(25)])
+    assert many.reason.endswith("and 5 more")
+    assert "no new untracked files" in rule_untracked_build_output(before, before).reason
+
+
+def test_verify_attempt_lists_new_build_output() -> None:
+    box = fixed_sandbox()
+    box.ignored = ["build/agent_wrote_this.py"]
+    diff = SRC_DIFF + TEST_DIFF
+    report = verify_attempt(
+        box,
+        PLAN,
+        CONFIG,
+        diff=diff,
+        stats=diff_stats(diff),
+        baseline={"exit_code": 0},
+        root_files=set(),
+        ignored_before=[],
+    )
+    assert report.passed
+    last = report.rules[-1]
+    assert last.rule == "untracked_build_output"
+    assert "build/agent_wrote_this.py" in last.reason

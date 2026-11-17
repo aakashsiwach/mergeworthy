@@ -49,6 +49,7 @@ class WorkSandbox(Protocol):
     def read_bytes(self, relative: str) -> bytes | None: ...
     def write_bytes(self, relative: str, content: bytes | None) -> None: ...
     def restore_from_head(self, restore: list[str], remove: list[str]) -> RunResult: ...
+    def ignored_files(self) -> list[str]: ...
 
 
 SandboxFactory = Callable[[int, SandboxSettings], WorkSandbox]
@@ -175,6 +176,7 @@ def run_attempt(
         )
         if baseline.timed_out:
             return _fail(ledger, attempt_id, f"baseline tests took longer than {minutes} minutes")
+        ignored_before = box.ignored_files()
         if not baseline.ok:
             return _fail(
                 ledger, attempt_id, f"baseline tests fail before any change: {baseline.output[-500:]}"
@@ -230,6 +232,7 @@ def run_attempt(
             stats=stats,
             baseline=baseline_record,
             root_files=box.root_files(),
+            ignored_before=ignored_before,
         )
     except SandboxError as exc:
         return _fail(ledger, attempt_id, f"verification could not run: {exc}", result)

@@ -176,7 +176,9 @@ Implementation notes (`verify.py`):
 - Rule 5 runs the linters the project configures (ruff, black, isort, flake8; Spotless, Checkstyle) on the
   changed files, offline. A configured tool that is not installed fails the rule.
 - Diffs never include build output: clone writes `target/`, `build/`, `__pycache__/` and similar patterns
-  to `.git/info/exclude`.
+  to `.git/info/exclude`. Because such files never reach the diff, verification lists any new
+  untracked file under a build-output folder (compiled classes and standard reports left out) as an
+  informational `untracked_build_output` note, shown as `[NOTE]` in `mergeworthy review`.
 
 ## Self-review (`review.py`)
 

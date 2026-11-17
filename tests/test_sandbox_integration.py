@@ -123,6 +123,8 @@ def test_verification_rules_in_docker(box: Sandbox) -> None:
     assert box.install(plan).ok
     baseline = box.run_tests(plan, timeout_minutes=15)
     assert baseline.ok, baseline.output
+    ignored_before = box.ignored_files()
+    assert any(p.startswith("target/") for p in ignored_before)
     source = "src/main/java/example/Calculator.java"
     fixed = (box.workdir / source).read_text(encoding="utf-8").replace("a + b", "Math.addExact(a, b)")
     agent = FakeAgent(files={source: fixed, "src/test/java/example/OverflowTest.java": OVERFLOW_TEST})
@@ -138,6 +140,9 @@ def test_verification_rules_in_docker(box: Sandbox) -> None:
         stats=diff_stats(diff),
         baseline={"exit_code": 0, "timed_out": False},
         root_files=box.root_files(),
+        ignored_before=ignored_before,
     )
     assert report.passed, report.summary()
+    notes = {r.rule: r for r in report.rules}["untracked_build_output"]
+    assert notes.details["files"] == [], notes.reason  # new classes and reports are filtered out
     assert box.diff() == diff  # the fix is back after testing without it

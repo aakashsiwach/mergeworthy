@@ -45,7 +45,15 @@ def waiting_attempt(
         },
         test_results={"baseline": {"exit_code": 0, "timed_out": False, "seconds": 12.0}},
         commands=[{"command": "python -m pytest -q", "exit_code": 0, "timed_out": False}],
-        verification=[{"rule": "tests_pass", "passed": True, "reason": "tests pass with the change"}],
+        verification=[
+            {"rule": "tests_pass", "passed": True, "reason": "tests pass with the change"},
+            {
+                "rule": "untracked_build_output",
+                "passed": True,
+                "reason": "1 new untracked files under build-output folders, NOT in the diff: build/x.py",
+                "details": {"informational": True, "files": ["build/x.py"]},
+            },
+        ],
         review_verdict="accept",
         review_reasons={
             "rubric_version": "1",
@@ -108,6 +116,7 @@ def test_approve_shows_everything_and_pins_the_diff(env: tuple[str, Path]) -> No
         "baseline: exit 0, 12s",  # tests
         "agent ran: python -m pytest -q -> exit 0",
         "[PASS] tests_pass",  # verification
+        "[NOTE] untracked_build_output: 1 new untracked files under build-output folders, NOT in the diff",
         "Self-review: accept (rubric v1)",  # review
         "[yes] solves_issue: handles the empty case",
         "ai_policy: no policy against AI-assisted contributions",  # policy checks

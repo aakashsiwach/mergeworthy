@@ -189,7 +189,7 @@ would a maintainer be likely to merge it. Any "no" rejects the attempt with the 
 mergeworthy discover [--language java|python] [--limit N]    find and record candidate issues
 mergeworthy check REPO_OR_ISSUE                              run eligibility checks and print reasons
 mergeworthy decide [SUBJECT CHECK --allow|--deny -r REASON]  list or answer questions for a human
-mergeworthy work ISSUE_URL [--dry-run]                       run one attempt end to end up to approval
+mergeworthy work ISSUE_URL [--dry-run/--no-dry-run]          run one attempt end to end up to approval
 mergeworthy review                                           approve or reject waiting attempts
 mergeworthy submit ATTEMPT_ID                                submit an approved attempt
 mergeworthy followup                                         check open pull requests, draft replies
@@ -198,6 +198,11 @@ mergeworthy replay [--split dev|test] [--final]              run the replay benc
 ```
 
 `--dry-run` is the default for anything that would write to GitHub until it is explicitly configured off.
+
+`work` is a dry run by default: it runs the eligibility checks and stored decisions without writing to the
+ledger, prints the steps it would take, and starts no sandbox and spends nothing. `--no-dry-run` records the
+check and runs the attempt. It refuses repositories whose contributing guide asks to claim issues first until
+the claim flow (T14) exists. Exit codes: 0 done, 1 not possible or failed, 3 a human must decide.
 
 `discover` and `check` only read from GitHub. `discover` stores candidates and opens one attempt per new issue in
 `discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible`, `needs_human` or

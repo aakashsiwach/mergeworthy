@@ -15,6 +15,7 @@ from rich.table import Table
 from rich.text import Text
 
 from mergeworthy import __version__
+from mergeworthy.agent import CodingAgent
 from mergeworthy.config import Config, ConfigError, load_config, load_secrets
 from mergeworthy.discover import (
     CheckOutcome,
@@ -25,7 +26,10 @@ from mergeworthy.discover import (
 )
 from mergeworthy.eligibility import Report, Status
 from mergeworthy.github import GitHubClient, GitHubError
-from mergeworthy.ledger import Decision, Ledger, LedgerError
+from mergeworthy.ledger import AttemptState, Decision, Ledger, LedgerError
+from mergeworthy.recheck import AwaitingHumanDecision, NoLongerAvailable
+from mergeworthy.sandbox import SandboxError, docker_available
+from mergeworthy.work import STARTABLE, SandboxFactory, default_sandbox, plan_work, run_attempt
 
 app = typer.Typer(
     name="mergeworthy",
@@ -205,3 +209,92 @@ def decide_command(
         console.print(f"resumable attempts: {ids} (run `mergeworthy work` again to continue)")
     if decision is Decision.ALLOW:
         console.print(safe(f"run `mergeworthy check {outcome.record.subject}` to re-evaluate."))
+
+
+def make_agent(config: Config) -> CodingAgent:
+    """The real coding agent. Imported lazily so read-only commands never load the SDK."""
+    from mergeworthy.agent.claude import ClaudeCodingAgent
+
+    return ClaudeCodingAgent(model=config.agent.model)
+
+
+def make_sandbox_factory() -> SandboxFactory:
+    return default_sandbox
+
+
+def sandbox_ready() -> bool:
+    return docker_available()
+
+
+@app.command(name="work")
+def work_command(
+    issue: Annotated[str, typer.Argument(help="Issue URL or owner/repo#N.")],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run/--no-dry-run", help="Dry run (default): show the plan; start nothing, spend nothing."
+        ),
+    ] = True,
+    config_path: ConfigOption = None,
+) -> None:
+    """Run one attempt end to end up to verification. Dry run by default.
+
+    Exits 0 when the attempt produced a diff (or the dry run found the issue workable), 1 when it cannot or
+    did not succeed, 3 when a human must decide first.
+    """
+    config = _load(config_path)
+    now = datetime.now(UTC)
+    try:
+        with Ledger(config.ledger_path) as ledger, _client() as gh:
+            plan = plan_work(gh, ledger, config, issue, now=now)
+            _print_report(plan.repository)
+            _print_report(plan.issue)
+            if plan.claim_required:
+                console.print(
+                    "the contributing guide asks to claim issues first; claiming is not built yet",
+                    style="red",
+                )
+                raise typer.Exit(1)
+            if plan.blocked:
+                console.print("not eligible", style="red")
+                raise typer.Exit(1)
+            if not plan.eligible:
+                console.print("needs a human decision first: `mergeworthy decide`", style="yellow")
+                raise typer.Exit(3)
+            if dry_run:
+                console.print(safe(f"dry run: {plan.target}"), style="bold")
+                for number, step in enumerate(plan.steps(config), 1):
+                    console.print(safe(f"  {number}. {step}"))
+                console.print("nothing was started. Run with --no-dry-run to do it.")
+                return
+            if not sandbox_ready():
+                console.print("Docker is not available; start it and try again", style="red")
+                raise typer.Exit(1)
+            checked = check_and_record(gh, ledger, config, plan.target, now=now)
+            if checked.attempt_id is None or checked.attempt_state not in STARTABLE:
+                state = checked.attempt_state.value if checked.attempt_state else "none"
+                console.print(f"attempt is {state}; work starts only from eligible or claimed", style="red")
+                raise typer.Exit(1)
+            outcome = run_attempt(
+                gh,
+                ledger,
+                config,
+                checked.attempt_id,
+                make_agent(config),
+                sandbox_factory=make_sandbox_factory(),
+            )
+    except AwaitingHumanDecision as exc:
+        console.print(safe(f"paused: {exc}"), style="yellow")
+        raise typer.Exit(3) from exc
+    except NoLongerAvailable as exc:
+        console.print(safe(f"abandoned: {exc}"), style="red")
+        raise typer.Exit(1) from exc
+    except (ValueError, GitHubError, SandboxError) as exc:
+        console.print(safe(f"error: {exc}"), style="red")
+        raise typer.Exit(1) from exc
+
+    console.print(safe(f"attempt {outcome.attempt_id}: {outcome.state.value} ({outcome.reason})"))
+    if outcome.result is not None:
+        console.print(f"spend: ${outcome.result.spend_usd:.2f}")
+    if outcome.state is not AttemptState.WORKING and outcome.state is not AttemptState.AWAITING_APPROVAL:
+        raise typer.Exit(1)

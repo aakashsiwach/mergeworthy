@@ -11,11 +11,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from mergeworthy.agent import AttemptResult, AttemptStatus, Budget, CodingAgent, Task
 from mergeworthy.config import Config
+from mergeworthy.discover import parse_target
+from mergeworthy.eligibility import apply_decisions, check_issue, check_repository
 from mergeworthy.ledger import AttemptState, Ledger
 from mergeworthy.recheck import IssueReader, ensure_still_available
 from mergeworthy.sandbox import BuildPlan, RunResult, Sandbox, SandboxError, SandboxSettings
@@ -196,3 +199,76 @@ def run_attempt(
     if not result.diff.strip():
         return _fail(ledger, attempt_id, "the agent made no changes", result)
     return WorkOutcome(attempt_id, AttemptState.WORKING, result, "diff ready for verification")
+
+
+# --- planning (read-only) -----------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WorkPlan:
+    target: str
+    repository: Any  # eligibility.Report
+    issue: Any  # eligibility.Report
+    claim_required: bool
+    attempt_id: int | None
+    attempt_state: AttemptState | None
+    commit: str | None
+    default_branch: str | None
+
+    @property
+    def eligible(self) -> bool:
+        return bool(self.repository.eligible and self.issue.eligible)
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.repository.blocked or self.issue.blocked)
+
+    def steps(self, config: Config) -> list[str]:
+        return [
+            f"re-check {self.target}: open, not assigned to someone else, no linked pull request",
+            f"clone {self.repository.subject} at {self.default_branch} {self.commit} into a fresh sandbox",
+            "install dependencies (network on), then run the baseline tests offline "
+            f"(must pass within {config.eligibility.max_test_minutes} minutes)",
+            f"run the coding agent ({config.agent.model}) with at most "
+            f"${config.budget.max_spend_usd_per_attempt:.2f}, "
+            f"{config.budget.max_minutes_per_attempt} minutes and {config.agent.max_turns} turns",
+            "record the diff for verification and self-review; nothing is sent to GitHub",
+        ]
+
+
+def plan_work(gh: IssueReader, ledger: Ledger, config: Config, target: str, *, now: datetime) -> WorkPlan:
+    """What ``mergeworthy work`` would do, without writing to the ledger or starting a sandbox."""
+    full_name, number = parse_target(target)
+    if number is None:
+        raise ValueError("work needs an issue: owner/repo#N or an issue URL")
+    record = ledger.get_repository(full_name)
+
+    def lookup(subject: str, check_name: str, digest: str) -> tuple[str, str] | None:
+        found = ledger.find_decision(subject, check_name, digest)
+        if found is None or found.decision is None:
+            return None
+        return found.decision.value, found.reason or ""
+
+    repo, _, repo_report = check_repository(
+        gh, config, full_name, now=now, ledger_denied=bool(record and record["deny_listed"])
+    )
+    repo_report = apply_decisions(repo_report, lookup)
+    issue = gh.get_issue(repo.full_name, number)
+    issue_report = apply_decisions(check_issue(gh, config, issue, now=now), lookup)
+    claim = repo_report.get("claim_first")
+    attempt_id: int | None = None
+    attempt_state: AttemptState | None = None
+    if record is not None:
+        for attempt in ledger.attempts_for_subject(f"{repo.full_name}#{number}"):
+            attempt_id, attempt_state = attempt.id, attempt.state
+    commits = gh.list_commits(repo.full_name, branch=repo.default_branch, limit=1)
+    return WorkPlan(
+        target=f"{repo.full_name}#{number}",
+        repository=repo_report,
+        issue=issue_report,
+        claim_required=bool(claim and claim.details.get("required")),
+        attempt_id=attempt_id,
+        attempt_state=attempt_state,
+        commit=commits[0].sha if commits else None,
+        default_branch=repo.default_branch,
+    )

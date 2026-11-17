@@ -190,7 +190,9 @@ would a maintainer be likely to merge it. Any "no" rejects the attempt with the 
 The rubric is `src/mergeworthy/data/review_rubric.md`, versioned in its front matter; the version is stored with
 every verdict. The call uses the Messages API with a JSON schema output, `[review] model` (default
 `claude-opus-5-5`), and server-side refusal fallback. Malformed output, a refusal, a cut-off answer or an API
-error is verdict `error` and rejects the attempt (fail closed). The reviewer never sees the agent's
+error is verdict `error` and rejects the attempt (fail closed). Self-review spend is estimated from the
+token counts and the list prices in `[prices]`; the `prices.checked` date is stored with the review and
+shown next to the spend in `mergeworthy review`. The agent's spend is the Agent SDK's own estimate. The reviewer never sees the agent's
 explanation.
 
 ## Data model (SQLite)

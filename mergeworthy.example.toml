@@ -74,6 +74,24 @@ max_turns = 80
 [review]
 model = "claude-opus-5-5"
 
+# Model list prices in US dollars per million tokens, used to estimate self-review spend. The coding agent's
+# spend comes from the Agent SDK's own estimate. Check these against the published price list and update
+# `checked` when you do; the date is shown next to every spend figure.
+[prices]
+checked = 2026-11-03
+
+[prices.models."claude-opus-5-5"]
+input_per_mtok = 4.0
+output_per_mtok = 20.0
+
+[prices.models."claude-sonnet-5-5"]
+input_per_mtok = 2.0
+output_per_mtok = 10.0
+
+[prices.models."claude-haiku-5-5"]
+input_per_mtok = 0.1
+output_per_mtok = 0.5
+
 # Docker sandbox (docs/architecture.md). Containers get no host environment variables and no secrets.
 [sandbox]
 # Where working copies live on the host; one directory per attempt. Default: ~/.mergeworthy/work

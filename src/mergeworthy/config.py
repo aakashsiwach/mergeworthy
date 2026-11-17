@@ -10,6 +10,7 @@ import os
 import re
 import tomllib
 from collections.abc import Iterator, Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,35 @@ class ReviewSettings(_Model):
     model: str = Field(default="claude-opus-5-5", min_length=1)
 
 
+class ModelPrice(_Model):
+    """List price in US dollars per million tokens."""
+
+    input_per_mtok: float = Field(ge=0)
+    output_per_mtok: float = Field(ge=0)
+
+
+def _default_prices() -> dict[str, ModelPrice]:
+    return {
+        "claude-opus-5-5": ModelPrice(input_per_mtok=4.0, output_per_mtok=20.0),
+        "claude-sonnet-5-5": ModelPrice(input_per_mtok=2.0, output_per_mtok=10.0),
+        "claude-haiku-5-5": ModelPrice(input_per_mtok=0.10, output_per_mtok=0.50),
+    }
+
+
+class Prices(_Model):
+    """Model list prices used to estimate self-review spend. Check them against the published price list and
+    update ``checked`` when you do; the date is shown next to every spend figure."""
+
+    checked: date = date(2026, 11, 3)
+    models: dict[str, ModelPrice] = Field(default_factory=_default_prices)
+
+    def cost(self, model: str, input_tokens: int, output_tokens: int) -> float | None:
+        price = self.models.get(model)
+        if price is None:
+            return None
+        return (input_tokens * price.input_per_mtok + output_tokens * price.output_per_mtok) / 1_000_000
+
+
 class Budget(_Model):
     """Hard caps for one attempt."""
 
@@ -111,6 +141,7 @@ class Config(_Model):
     budget: Budget = Field(default_factory=Budget)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     review: ReviewSettings = Field(default_factory=ReviewSettings)
+    prices: Prices = Field(default_factory=Prices)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
 
     @field_validator("languages")

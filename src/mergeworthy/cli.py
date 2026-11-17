@@ -222,7 +222,7 @@ def make_agent(config: Config) -> CodingAgent:
 
 
 def make_reviewer(config: Config) -> Reviewer:
-    return ClaudeReviewer(model=config.review.model)
+    return ClaudeReviewer(model=config.review.model, prices=config.prices)
 
 
 def make_sandbox_factory() -> SandboxFactory:

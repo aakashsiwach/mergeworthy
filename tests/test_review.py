@@ -160,6 +160,24 @@ def test_reviewer_fails_closed(client: FakeClient, reason: str) -> None:
     assert reason in result.reasons[0]
 
 
+def test_spend_uses_configured_prices_and_records_the_check_date() -> None:
+    from datetime import date
+
+    from mergeworthy.config import ModelPrice, Prices
+
+    prices = Prices(
+        checked=date(2027, 1, 15), models={"claude-opus-5-5": ModelPrice(input_per_mtok=1, output_per_mtok=2)}
+    )
+    client = FakeClient(response(json.dumps(answers())))
+    result = ClaudeReviewer(client=client, prices=prices).review(REQUEST)
+    assert result.spend_usd == pytest.approx((10_000 * 1 + 2_000 * 2) / 1e6)
+    assert result.to_dict()["prices_checked"] == "2027-01-15"
+    unknown = ClaudeReviewer(client=FakeClient(response(json.dumps(answers()), model="claude-new-model")))
+    other = unknown.review(REQUEST)
+    assert other.spend_usd == 0.0
+    assert other.prices_checked == "no price for claude-new-model"
+
+
 def test_oversized_diff_is_not_sent() -> None:
     client = FakeClient(response(json.dumps(answers())))
     big = ReviewRequest(**{**REQUEST.__dict__, "diff": "+" * 300_000})

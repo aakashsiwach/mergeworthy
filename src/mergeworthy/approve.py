@@ -128,7 +128,11 @@ def render_summary(ledger: Ledger, attempt_id: int) -> str:
         lines.append(f"[{check.get('status', '?'):>8}] {check.get('name')}: {clean(check.get('reason'))}")
 
     lines += _section("Spend")
-    lines.append(f"${float(details.get('spend_usd') or 0.0):.2f} (agent and self-review)")
+    checked = review.get("prices_checked") or "unknown"
+    lines.append(
+        f"${float(details.get('spend_usd') or 0.0):.2f} (agent: Agent SDK estimate; "
+        f"self-review: list prices checked {checked})"
+    )
     return "\n".join(lines)
 
 

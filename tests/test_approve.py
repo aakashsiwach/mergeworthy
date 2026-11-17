@@ -59,6 +59,7 @@ def waiting_attempt(
             "rubric_version": "1",
             "answers": {"solves_issue": {"answer": "yes", "reason": "handles the empty case"}},
             "reasons": [],
+            "prices_checked": "2026-11-03",
         },
         spend_usd=0.84,
     )
@@ -120,7 +121,7 @@ def test_approve_shows_everything_and_pins_the_diff(env: tuple[str, Path]) -> No
         "Self-review: accept (rubric v1)",  # review
         "[yes] solves_issue: handles the empty case",
         "ai_policy: no policy against AI-assisted contributions",  # policy checks
-        "$0.84",  # spend
+        "$0.84 (agent: Agent SDK estimate; self-review: list prices checked 2026-11-03)",  # spend
         f"attempt {attempt} approved",
     ):
         assert expected in out, expected

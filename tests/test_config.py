@@ -69,6 +69,18 @@ def test_loads_values(tmp_path: Path) -> None:
     assert config.is_denied("some-org/repo.js")
 
 
+def test_prices_have_a_check_date_and_compute_cost() -> None:
+    config = parse_config(
+        {"prices": {"checked": "2027-02-01", "models": {"m": {"input_per_mtok": 3, "output_per_mtok": 15}}}}
+    )
+    assert config.prices.checked.isoformat() == "2027-02-01"
+    assert config.prices.cost("m", 1_000_000, 100_000) == pytest.approx(4.5)
+    assert config.prices.cost("unknown", 1, 1) is None
+    assert Config().prices.models["claude-opus-5-5"].output_per_mtok == 20.0
+    with pytest.raises(ConfigError, match="input_per_mtok"):
+        parse_config({"prices": {"models": {"m": {"input_per_mtok": -1, "output_per_mtok": 1}}}})
+
+
 def test_deny_list_wins_over_allowlist() -> None:
     config = parse_config({"allowlist": ["a/b"], "deny_list": ["a/b"]})
     assert not config.is_allowed("a/b")

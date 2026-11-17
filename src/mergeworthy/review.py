@@ -15,6 +15,8 @@ from functools import cache
 from importlib import resources
 from typing import Any, Protocol
 
+from mergeworthy.config import Prices
+
 QUESTIONS = (
     "solves_issue",
     "smallest_change",
@@ -26,9 +28,6 @@ QUESTIONS = (
 DEFAULT_MODEL = "claude-opus-5-5"
 MAX_DIFF_CHARS = 200_000
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
-# US dollars per million tokens (input, output). Unknown models record tokens only.
-PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-haiku-5-5": (0.10, 0.50)}
 
 
 class Verdict(StrEnum):
@@ -76,6 +75,7 @@ class ReviewResult:
     model: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
     spend_usd: float = 0.0
+    prices_checked: str | None = None
 
     @property
     def accepted(self) -> bool:
@@ -90,6 +90,7 @@ class ReviewResult:
             "model": self.model,
             "usage": self.usage,
             "spend_usd": self.spend_usd,
+            "prices_checked": self.prices_checked,
         }
 
 
@@ -182,8 +183,11 @@ class Reviewer(Protocol):
 class ClaudeReviewer:
     """Self-review with the Messages API: structured output, server-side refusal fallback, fail closed."""
 
-    def __init__(self, *, model: str = DEFAULT_MODEL, client: Any = None) -> None:
+    def __init__(
+        self, *, model: str = DEFAULT_MODEL, prices: Prices | None = None, client: Any = None
+    ) -> None:
         self.model = model
+        self.prices = prices or Prices()
         self._client = client
 
     def _get_client(self) -> Any:
@@ -222,8 +226,9 @@ class ClaudeReviewer:
             "output_tokens": int(getattr(response.usage, "output_tokens", 0) or 0),
         }
         served_by = getattr(response, "model", None) or self.model
-        price = PRICES.get(served_by)
-        spend = (usage["input_tokens"] * price[0] + usage["output_tokens"] * price[1]) / 1e6 if price else 0.0
+        cost = self.prices.cost(served_by, usage["input_tokens"], usage["output_tokens"])
+        spend = cost if cost is not None else 0.0
+        checked = self.prices.checked.isoformat() if cost is not None else f"no price for {served_by}"
         if response.stop_reason == "refusal":
             result = error_result("the reviewer declined to review", rubric.version, served_by)
         elif response.stop_reason == "max_tokens":
@@ -235,5 +240,12 @@ class ClaudeReviewer:
             except MalformedReview as exc:
                 result = error_result(f"malformed review: {exc}", rubric.version, served_by)
         return ReviewResult(
-            result.verdict, result.answers, result.reasons, rubric.version, served_by, usage, round(spend, 6)
+            result.verdict,
+            result.answers,
+            result.reasons,
+            rubric.version,
+            served_by,
+            usage,
+            round(spend, 6),
+            checked,
         )

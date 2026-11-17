@@ -19,6 +19,7 @@ from mergeworthy.agent import AttemptResult, AttemptStatus, Budget, CodingAgent,
 from mergeworthy.config import Config
 from mergeworthy.discover import parse_target
 from mergeworthy.eligibility import apply_decisions, check_issue, check_repository
+from mergeworthy.gitops import branch_name
 from mergeworthy.ledger import AttemptState, Ledger
 from mergeworthy.recheck import IssueReader, ensure_still_available
 from mergeworthy.review import Reviewer, ReviewRequest
@@ -146,7 +147,7 @@ def run_attempt(
         raise ValueError(f"{full_name} has no commits on {repo.default_branch}")
     commit = commits[0].sha
     ledger.transition(attempt_id, AttemptState.WORKING, f"agent started on {repo.default_branch} at {commit}")
-    ledger.update_attempt(attempt_id, branch=f"mergeworthy/issue-{number}-{attempt_id}", base_commit=commit)
+    ledger.update_attempt(attempt_id, branch=branch_name(number, issue.title), base_commit=commit)
 
     box = sandbox_factory(attempt_id, config.sandbox)
     try:

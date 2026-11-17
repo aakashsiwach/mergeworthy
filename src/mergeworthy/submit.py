@@ -34,7 +34,7 @@ from mergeworthy.approve import clean, diff_sha256
 from mergeworthy.config import Config
 from mergeworthy.eligibility import recheck_issue
 from mergeworthy.github import GitHubClient, GitHubError, _check_repo
-from mergeworthy.gitops import Git, GitError, Identity
+from mergeworthy.gitops import Git, GitError, Identity, branch_name, check_branch
 from mergeworthy.ledger import AttemptState, Ledger
 from mergeworthy.patch import PatchError, require_valid
 from mergeworthy.recheck import IssueReader, ensure_still_available
@@ -229,6 +229,12 @@ def prepare_submission(
         )
     repo = gh.get_repository(upstream)
     title = _clean_title(str(issue.get("title", "")))
+    # The branch is derived from the issue, never taken from stored data, and only ever a new branch.
+    branch = branch_name(number, title)
+    try:
+        check_branch(branch, issue_number=number, default_branch=repo.default_branch)
+    except GitError as exc:
+        raise SubmissionRefused(str(exc)) from exc
     body = pull_request_body(
         issue_number=number,
         explanation=details.get("explanation") or "",
@@ -242,7 +248,7 @@ def prepare_submission(
         issue_url=str(issue.get("url")),
         base_branch=repo.default_branch,
         base_commit=base_commit,
-        branch=details.get("branch") or f"mergeworthy/issue-{number}-{attempt_id}",
+        branch=branch,
         files=report.files,
         diff=diff,
         diff_sha256=approved_sha,
@@ -335,12 +341,17 @@ def submit(
     root = Path(tempfile.mkdtemp(prefix="mergeworthy-submit-", dir=workspace))
     clone = root / "repo"
     try:
+        check_branch(plan.branch, issue_number=plan.issue_number, default_branch=plan.base_branch)
         git.fresh_clone(plan.upstream, plan.base_commit, plan.branch, clone)
         git.apply(plan.diff, clone)
         changed = git.changed_files(clone)
         if changed != sorted(plan.files):
             raise SubmissionRefused(f"applying the diff changed {changed}, approved {sorted(plan.files)}")
         commit = git.commit(clone, plan.files, plan.identity, plan.commit_message)
+        if git.remote_branch_exists(clone, push_repository, plan.branch, token.get_secret_value()):
+            raise SubmissionRefused(
+                f"branch {plan.branch} already exists in {push_repository}; nothing was pushed"
+            )
         git.push(clone, push_repository, plan.branch, token.get_secret_value())
     except GitError as exc:
         raise SubmissionRefused(f"git: {exc}") from exc

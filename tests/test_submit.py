@@ -382,3 +382,113 @@ def test_git_output_never_contains_the_token(tmp_path: Path) -> None:
             ["rev-parse", "--verify", "FAKE_TOKEN_FOR_TESTS"], cwd=tmp_path, token="FAKE_TOKEN_FOR_TESTS"
         )
     assert "FAKE_TOKEN_FOR_TESTS" not in str(info.value)
+
+
+# --- branches ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("number", "title", "expected"),
+    [
+        (12, "Crash on empty input", "mergeworthy/12-crash-on-empty-input"),
+        (7, "Fix `parse()` -- handles  UTF-8 \u00e9!", "mergeworthy/7-fix-parse-handles-utf-8"),
+        (3, "!!!", "mergeworthy/3-change"),
+        (
+            9,
+            "A very long title that keeps going well past the forty character limit",
+            "mergeworthy/9-a-very-long-title-that-keeps-going-well",
+        ),
+    ],
+)
+def test_branch_name(number: int, title: str, expected: str) -> None:
+    from mergeworthy.gitops import branch_name, check_branch
+
+    branch = branch_name(number, title)
+    assert branch == expected
+    check_branch(branch, issue_number=number, default_branch="main")
+
+
+@pytest.mark.parametrize(
+    ("branch", "reason"),
+    [
+        ("main", "only mergeworthy/"),
+        ("mergeworthy/issue-12-1", "only mergeworthy/"),
+        ("mergeworthy/12-../../main", "only mergeworthy/"),
+        ("mergeworthy/12-Crash", "only mergeworthy/"),
+        ("feature/12-crash", "only mergeworthy/"),
+        ("mergeworthy/13-crash", "not for issue #12"),
+        ("mergeworthy/12-crash", "default branch"),
+    ],
+)
+def test_check_branch_refuses(branch: str, reason: str) -> None:
+    from mergeworthy.gitops import check_branch
+
+    default = "mergeworthy/12-crash" if reason == "default branch" else "main"
+    with pytest.raises(GitError, match=reason):
+        check_branch(branch, issue_number=12, default_branch=default)
+
+
+def test_plan_uses_the_derived_branch_not_stored_data(ledger: Ledger, tmp_path: Path) -> None:
+    attempt = approved_attempt(ledger)
+    ledger.update_attempt(attempt, branch="main")  # stored data is never trusted for the branch
+    plan = plan_for(ledger, attempt, config(tmp_path))
+    assert plan.branch == "mergeworthy/12-crash-on-empty-input"
+
+
+def test_refuses_when_branch_would_be_the_default_branch(ledger: Ledger, tmp_path: Path) -> None:
+    attempt = approved_attempt(ledger)
+    gh = github()
+    repo = gh.repos[UPSTREAM].repository
+    gh.repos[UPSTREAM].repository = repo.model_copy(
+        update={"default_branch": "mergeworthy/12-crash-on-empty-input"}
+    )
+    with pytest.raises(SubmissionRefused, match="default branch"):
+        plan_for(ledger, attempt, config(tmp_path), gh)
+
+
+def test_refuses_to_push_to_an_existing_branch(
+    ledger: Ledger, tmp_path: Path, remotes: tuple[Path, str]
+) -> None:
+    root, base = remotes
+    bare = root / "owner" / "repo.git"
+    sh("branch", "mergeworthy/12-crash-on-empty-input", base, cwd=bare)  # someone already has this branch
+    before = sh("rev-parse", "mergeworthy/12-crash-on-empty-input", cwd=bare)
+    attempt = approved_attempt(ledger, base_commit=base)
+    cfg = config(tmp_path)
+    gh = github()
+    plan = plan_for(ledger, attempt, cfg, gh)
+    with respx.mock(base_url=API_URL, assert_all_called=False) as api:
+        routes = writer_api(api, can_push=True)
+        with pytest.raises(SubmissionRefused, match="already exists"):
+            submit(
+                plan,
+                gh=gh,
+                writer=GitHubWriter(TOKEN, cfg),
+                ledger=ledger,
+                config=cfg,
+                git=Git(base_url=root.as_posix()),
+                token=TOKEN,
+                workspace=tmp_path,
+            )
+        assert not routes["pull"].called
+    assert sh("rev-parse", "mergeworthy/12-crash-on-empty-input", cwd=bare) == before
+    assert ledger.get_attempt(attempt).state is AttemptState.APPROVED
+
+
+def test_push_itself_never_updates_an_existing_branch(tmp_path: Path, remotes: tuple[Path, str]) -> None:
+    root, base = remotes
+    bare = root / "owner" / "repo.git"
+    git = Git(base_url=root.as_posix())
+    clone = tmp_path / "clone"
+    git.fresh_clone(UPSTREAM, base, "mergeworthy/5-x", clone)
+    (clone / "new.txt").write_text("x", encoding="utf-8")
+    git.commit(clone, ["new.txt"], ME, "x")
+    git.push(clone, UPSTREAM, "mergeworthy/5-x", None)  # creating a new branch works
+    (clone / "new.txt").write_text("y", encoding="utf-8")
+    git.commit(clone, ["new.txt"], ME, "y")
+    with pytest.raises(GitError, match="push failed"):  # the lease refuses: the branch now exists
+        git.push(clone, UPSTREAM, "mergeworthy/5-x", None)
+    for forbidden in ("main", "refs/heads/main", "mergeworthy/5-x:main"):
+        with pytest.raises(GitError, match="refusing to push"):
+            git.push(clone, UPSTREAM, forbidden, None)
+    assert sh("rev-parse", "main", cwd=bare) == base

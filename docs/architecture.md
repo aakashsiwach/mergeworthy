@@ -245,7 +245,9 @@ files; the issue is still available. It is a dry run, printing exactly what woul
 `dry_run = false` and `--no-dry-run` are given. A real run re-checks the issue, pushes to the upstream when the
 token can push there and otherwise forks, makes a fresh clean clone on the host at the attempt's base commit,
 applies the approved diff, requires `git status` to show exactly the approved files, commits as the local git
-identity, pushes (token via an environment variable read by a one-off credential helper, never in argv or a
+identity, pushes a new branch named `mergeworthy/<issue-number>-<slug>` (derived from the issue, never the
+default branch; refused if it already exists, and pushed with `--force-with-lease=<ref>:` so the remote itself
+refuses to update an existing branch), pushes (token via an environment variable read by a one-off credential helper, never in argv or a
 URL), opens the pull request with the description template, and records it. If the project prescribes AI
 disclosure wording, `--disclosure` with that wording is required.
 

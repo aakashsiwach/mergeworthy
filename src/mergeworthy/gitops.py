@@ -12,6 +12,7 @@ one-off credential helper, never on the command line or in a URL, and is removed
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -35,6 +36,36 @@ _HELPER = f'!f() {{ test "$1" = get && echo username=x-access-token && echo "pas
 
 class GitError(Exception):
     pass
+
+
+BRANCH_PREFIX = "mergeworthy/"
+_BRANCH = re.compile(r"^mergeworthy/(\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$")
+SLUG_LIMIT = 40
+
+
+def branch_name(issue_number: int, title: str) -> str:
+    """``mergeworthy/<issue-number>-<slug>``, the only branch names mergeworthy ever pushes."""
+    words = re.findall(r"[a-z0-9]+", title.lower())
+    slug = ""
+    for word in words:
+        candidate = f"{slug}-{word}" if slug else word
+        if len(candidate) > SLUG_LIMIT:
+            break
+        slug = candidate
+    return f"{BRANCH_PREFIX}{int(issue_number)}-{slug or 'change'}"
+
+
+def check_branch(branch: str, *, issue_number: int, default_branch: str) -> None:
+    """Refuse anything but a ``mergeworthy/<issue-number>-<slug>`` branch for this issue."""
+    match = _BRANCH.fullmatch(branch)
+    if not match:
+        raise GitError(
+            f"refusing branch {branch!r}: only mergeworthy/<issue-number>-<slug> branches are pushed"
+        )
+    if int(match.group(1)) != int(issue_number):
+        raise GitError(f"refusing branch {branch!r}: it is not for issue #{issue_number}")
+    if branch == default_branch:
+        raise GitError(f"refusing branch {branch!r}: it is the default branch")
 
 
 @dataclass(frozen=True)
@@ -162,7 +193,20 @@ class Git:
         )
         return self.run(["rev-parse", "HEAD"], cwd=repo).strip()
 
+    def remote_branch_exists(self, repo: Path, full_name: str, branch: str, token: str | None) -> bool:
+        out = self.run(
+            ["ls-remote", "--heads", self.url_for(full_name), f"refs/heads/{branch}"], cwd=repo, token=token
+        )
+        return bool(out.strip())
+
     def push(self, repo: Path, full_name: str, branch: str, token: str | None) -> None:
+        """Create ``refs/heads/<branch>`` on the remote. Never updates an existing branch: the lease with an
+        empty expected value makes the remote refuse if the branch already exists (atomic, no race)."""
+        if not _BRANCH.fullmatch(branch):
+            raise GitError(f"refusing to push {branch!r}: not a mergeworthy/<issue-number>-<slug> branch")
+        ref = f"refs/heads/{branch}"
         self.run(
-            ["push", "--quiet", self.url_for(full_name), f"HEAD:refs/heads/{branch}"], cwd=repo, token=token
+            ["push", "--quiet", f"--force-with-lease={ref}:", self.url_for(full_name), f"HEAD:{ref}"],
+            cwd=repo,
+            token=token,
         )

@@ -300,6 +300,12 @@ def check_recent_commit(gh: GitHubReader, repo: Repository, config: Config, now:
 
 def check_outside_merge(gh: GitHubReader, repo: Repository, config: Config, now: datetime) -> CheckResult:
     days = config.eligibility.max_days_since_outside_merge
+    owner = repo.full_name.split("/")[0]
+    if config.github_login and owner.lower() == config.github_login.lower():
+        # The check asks whether maintainers respond to outsiders. When the approving human owns the
+        # repository, they are the maintainer, so it does not apply. Recorded with the reason.
+        reason = f"exempt: the repository is owned by {owner}, the configured github_login"
+        return _pass("outside_merge", reason, exempt=True, exemption=reason)
     cutoff = now - timedelta(days=days)
     for pr in gh.list_merged_pull_requests(repo.full_name):
         outside = pr.author_association not in MAINTAINER_ASSOCIATIONS and not _is_bot(pr.author)

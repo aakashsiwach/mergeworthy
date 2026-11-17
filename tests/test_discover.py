@@ -291,3 +291,20 @@ def test_cli_decide_lists_and_answers(cli_env: Path) -> None:
     )
     assert unknown.exit_code == 1
     assert "no open question" in unknown.output
+
+
+def test_owner_exemption_is_recorded_in_the_ledger(ledger: Ledger) -> None:
+    from fakes import FakeGitHub as Fake
+
+    mine = load_fixture("welcoming", full_name="me/project")
+    mine.merged = []
+    mine.issues[1] = make_issue("me/project", 1)
+    config = parse_config({"github_login": "me"})
+    outcome = check_and_record(Fake(mine), ledger, config, "me/project#1", now=NOW)
+    assert outcome.eligible
+    repo = ledger.get_repository("me/project")
+    assert repo is not None
+    recorded = repo["activity_checks"]["outside_merge"]
+    assert recorded["status"] == "pass"
+    assert recorded["details"]["exempt"] is True
+    assert "owned by me" in recorded["details"]["exemption"]

@@ -12,7 +12,7 @@ A repository is eligible only if **all** of these hold:
 | Public, with an OSI-approved license | required |
 | Language in scope | Java or Python (stage 1) |
 | Active: a commit to the default branch within | 30 days |
-| Maintainers respond: a pull request from an outside contributor merged within | 90 days |
+| Maintainers respond: a pull request from an outside contributor merged within (not checked for repositories owned by the approving human's `github_login`; the exemption is recorded) | 90 days |
 | A contributing guide exists (`CONTRIBUTING*`, `.github/CONTRIBUTING*` or `docs/CONTRIBUTING*`) | required |
 | No policy refuses AI-assisted contributions | required |
 | Not on the local deny list | required |

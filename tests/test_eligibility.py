@@ -335,3 +335,22 @@ def test_other_comments_pass(c: Comment) -> None:
     gh.repos[name].comments[7] = [c]
     report = check_issue(gh, CONFIG, make_issue(name, 7), now=NOW)
     assert status(report, "no_recent_claim") is Status.PASS
+
+
+def test_own_repositories_are_exempt_from_the_outside_merge_check() -> None:
+    fake = load_fixture("welcoming", full_name="Me/project")
+    fake.merged = []  # nobody outside has had a pull request merged
+    gh = FakeGitHub(fake)
+    _, _, mine = check_repository(gh, parse_config({"github_login": "me"}), "Me/project", now=NOW)
+    result = mine.get("outside_merge")
+    assert result is not None
+    assert result.status is Status.PASS
+    assert result.details == {
+        "exempt": True,
+        "exemption": "exempt: the repository is owned by Me, the configured github_login",
+    }
+    assert mine.eligible
+    _, _, other = check_repository(gh, parse_config({"github_login": "someone-else"}), "Me/project", now=NOW)
+    assert status(other, "outside_merge") is Status.FAIL
+    _, _, unset = check_repository(gh, CONFIG, "Me/project", now=NOW)
+    assert status(unset, "outside_merge") is Status.FAIL

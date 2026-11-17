@@ -96,6 +96,9 @@ with mocks for its configuration (no shell tool, custom tool registered, budget 
 - [ ] Refuses repositories not on the allowlist. Refuses attempts not in `approved`. Dry-run prints exactly
       what would be sent.
 - [ ] Call `recheck.ensure_still_available` immediately before forking or pushing.
+- [ ] Never push from the working copy: fresh clean clone on the host, `patch.require_valid` against the
+      approved files, apply the diff, commit and push from the clean clone (architecture.md, untrusted
+      working copy rule).
 
 **Acceptance:** tests with mocked GitHub for the allowlist refusal, the state refusal, the description
 template and dry-run output.

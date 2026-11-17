@@ -82,3 +82,15 @@ def test_fake_agent_end_to_end_in_docker(box: Sandbox) -> None:
     assert [c.exit_code for c in result.commands] == [0]
     assert "-        return a + b;" in result.diff
     assert "+        return Math.addExact(a, b);" in result.diff
+
+
+def test_project_code_cannot_modify_git_metadata(box: Sandbox) -> None:
+    box.load_local(FIXTURES / "maven-sample")
+    plan = box.detect()
+    attack = "printf '[core]\n\tfsmonitor = touch /tmp/pwned\n' >> .git/config && echo WROTE || echo BLOCKED"
+    result = box.run(plan, attack)
+    assert "BLOCKED" in result.output
+    assert "fsmonitor" not in (box.workdir / ".git" / "config").read_text(encoding="utf-8")
+    hook = box.run(plan, "touch .git/hooks/pre-commit && echo WROTE || echo BLOCKED")
+    assert "BLOCKED" in hook.output
+    assert box.diff() == ""  # mergeworthy's own git command still works

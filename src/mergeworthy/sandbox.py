@@ -252,8 +252,28 @@ class Sandbox:
             return []
         return ["--user", f"{getuid()}:{getgid()}"]
 
-    def docker_run_args(self, image: str, script: str, *, network: bool, container: str) -> list[str]:
-        """The full ``docker run`` command line for one script. Public for tests and dry runs."""
+    def docker_run_args(
+        self,
+        image: str,
+        script: str,
+        *,
+        network: bool,
+        container: str,
+        git_writable: bool = False,
+        mount_repo: bool = True,
+        workdir: str = REPO_DIR,
+    ) -> list[str]:
+        """The full ``docker run`` command line for one script. Public for tests and dry runs.
+
+        Project code (installs, tests, agent commands) sees ``.git`` read-only, so it cannot plant git
+        configuration or hooks. Only mergeworthy's own fixed git commands get it writable.
+        """
+        mounts: list[str] = []
+        if mount_repo:
+            mounts += ["--mount", f"type=bind,source={self.workdir},target={REPO_DIR}"]
+            git_dir = self.workdir / ".git"
+            if not git_writable and git_dir.is_dir() and not git_dir.is_symlink():
+                mounts += ["--mount", f"type=bind,source={git_dir},target={REPO_DIR}/.git,readonly"]
         return [
             "docker",
             "run",
@@ -273,12 +293,11 @@ class Sandbox:
             "--cpus",
             str(self.settings.cpus),
             *self._user(),
-            "--mount",
-            f"type=bind,source={self.workdir},target={REPO_DIR}",
+            *mounts,
             "--mount",
             f"type=volume,source={self.volume},target={DEPS_DIR}",
             "--workdir",
-            REPO_DIR,
+            workdir,
             "--env",
             f"HOME={CONTAINER_HOME}",
             "--entrypoint",
@@ -296,23 +315,40 @@ class Sandbox:
         network: bool,
         timeout_seconds: float,
         limit: int | None = OUTPUT_LIMIT,
+        git_writable: bool = False,
+        mount_repo: bool = True,
+        workdir: str = REPO_DIR,
     ) -> RunResult:
         container = f"{self.name}-{uuid.uuid4().hex[:8]}"
-        args = self.docker_run_args(image, script, network=network, container=container)
+        args = self.docker_run_args(
+            image,
+            script,
+            network=network,
+            container=container,
+            git_writable=git_writable,
+            mount_repo=mount_repo,
+            workdir=workdir,
+        )
         start = self._clock()
-        code, output, timed_out = self._runner(args, timeout_seconds)
+        code, output, timed_out = self._exec(args, timeout_seconds)
         if timed_out:
-            self._runner(["docker", "rm", "--force", container], 60)
+            self._exec(["docker", "rm", "--force", container], 60)
         self.remove_symlinks()
         text = output if limit is None else trim(output, limit)
         return RunResult(code, text, timed_out, self._clock() - start)
+
+    def _exec(self, args: Sequence[str], timeout: float) -> tuple[int, str, bool]:
+        """The only way this class starts a process: the docker CLI. Never git or project code on the host."""
+        if not args or args[0] != "docker":
+            raise SandboxError(f"refusing to run a non-docker command on the host: {list(args)[:2]}")
+        return self._runner(args, timeout)
 
     # lifecycle
 
     def prepare(self) -> None:
         """Create the working copy directory and the dependency volume."""
         self.workdir.mkdir(parents=True, exist_ok=True)
-        code, output, _ = self._runner(["docker", "volume", "create", self.volume], 60)
+        code, output, _ = self._exec(["docker", "volume", "create", self.volume], 60)
         if code != 0:
             raise SandboxError(f"could not create volume {self.volume}: {trim(output, 500)}")
         # The volume starts out owned by root; make it writable for the unprivileged user (fixed command,
@@ -332,7 +368,7 @@ class Sandbox:
                 "--mount", f"type=volume,source={self.volume},target={DEPS_DIR}",
                 "--entrypoint", "sh", self.settings.git_image, "-c", f"mkdir -p {CONTAINER_HOME}",
             ]  # fmt: skip
-        code, output, _ = self._runner(init, 300)
+        code, output, _ = self._exec(init, 300)
         if code != 0:
             raise SandboxError(f"could not initialise volume {self.volume}: {trim(output, 500)}")
 
@@ -356,7 +392,9 @@ class Sandbox:
             ]
         )
         timeout = self.settings.install_timeout_minutes * 60
-        return self._run(self.settings.git_image, script, network=True, timeout_seconds=timeout)
+        return self._run(
+            self.settings.git_image, script, network=True, timeout_seconds=timeout, git_writable=True
+        )
 
     def load_local(self, source: Path) -> None:
         """Copy a local project into the empty working copy (fixtures and replay cases), without symlinks."""
@@ -373,13 +411,15 @@ class Sandbox:
                 f"{GIT} -c user.name=mergeworthy -c user.email=mergeworthy@localhost commit -q -m baseline",
             ]
         )
-        result = self._run(self.settings.git_image, script, network=False, timeout_seconds=300)
+        result = self._run(
+            self.settings.git_image, script, network=False, timeout_seconds=300, git_writable=True
+        )
         if not result.ok:
             raise SandboxError(f"could not record the baseline commit: {trim(result.output, 500)}")
 
     def destroy(self) -> None:
         """Remove the dependency volume and the working copy."""
-        self._runner(["docker", "volume", "rm", "--force", self.volume], 120)
+        self._exec(["docker", "volume", "rm", "--force", self.volume], 120)
         root = self.workdir.parent
         if root.exists() and root.is_relative_to(self.settings.work_root.resolve()):
             shutil.rmtree(root, ignore_errors=True)
@@ -473,7 +513,9 @@ class Sandbox:
                 f"{GIT} -c core.pager=cat diff --no-color --no-ext-diff --no-textconv HEAD",
             ]
         )
-        result = self._run(self.settings.git_image, script, network=False, timeout_seconds=300, limit=None)
+        result = self._run(
+            self.settings.git_image, script, network=False, timeout_seconds=300, limit=None, git_writable=True
+        )
         if not result.ok:
             raise SandboxError(f"git diff failed: {trim(result.output, 500)}")
         return result.output

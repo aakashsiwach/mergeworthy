@@ -138,10 +138,14 @@ def check_tool_call(tool_name: str, tool_input: dict[str, Any], workdir: Path) -
         )
         if not candidate.is_relative_to(root):
             return f"{key} {value!r} is outside the working directory"
+        if ".git" in candidate.relative_to(root).parts:
+            return f"{key} {value!r} is inside .git, which is off limits"
     for key in PATTERN_KEYS:
         value = tool_input.get(key)
         if isinstance(value, str) and (_is_absolute(value) or ".." in posixpath.normpath(value).split("/")):
             return f"{key} {value!r} must be a relative pattern inside the working directory"
+        if isinstance(value, str) and key == "glob" and ".git/" in f"/{value}":
+            return f"{key} {value!r} must not target .git"
     return None
 
 

@@ -24,7 +24,7 @@ class FakeAgent:
         root = workdir.resolve()
         for relative, content in self.files.items():
             path = (root / relative).resolve()
-            if not path.is_relative_to(root):
+            if not path.is_relative_to(root) or ".git" in path.relative_to(root).parts:
                 raise ValueError(f"fake patch escapes the working copy: {relative}")
             if content is None:
                 path.unlink(missing_ok=True)

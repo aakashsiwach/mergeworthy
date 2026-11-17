@@ -117,6 +117,24 @@ warms Maven's offline cache), agent, then the diff and spend are recorded. Any f
 
 If the contributing guide documents a different command, that command wins.
 
+### Rule: the working copy is untrusted, including `.git`
+
+Tests and the agent run in the working copy, so everything in it can be hostile, including `.git` (for
+example a planted `core.fsmonitor`, `core.pager`, alias or hook that runs when git is used there).
+
+- **The host never runs git, or any other program, in the working copy.** `Sandbox` starts only the
+  `docker` CLI and refuses anything else. Host code only reads plain files there, refuses paths outside it,
+  and deletes symbolic links after every container run.
+- **Project code sees `.git` read-only.** Install, test and agent containers mount `.git` with `readonly`.
+  Only mergeworthy's own fixed git commands (clone, baseline commit, diff) run with it writable, inside a
+  container. The agent's file tools are denied any path under `.git`.
+- **Only the diff leaves the working copy, as text.** It is checked by `patch.validate_patch`: relative
+  paths only, nothing under `.git` or `.gitmodules`, regular files only (no symlinks or submodules), no binary
+  patches.
+- **Submission (T8) never pushes from the working copy.** It takes the approved diff text, makes a fresh
+  clean clone on the host, checks that the diff touches exactly the files recorded at approval
+  (`patch.require_valid`), applies it, and commits and pushes from that clean clone.
+
 ### Sandbox implementation (`sandbox.py`)
 
 - Per attempt: a host directory with the working copy (bind-mounted at `/work/repo`; the agent's file

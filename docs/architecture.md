@@ -99,6 +99,23 @@ policy limits. `AttemptResult` holds the diff, the agent's explanation, the comm
 
 If the contributing guide documents a different command, that command wins.
 
+### Sandbox implementation (`sandbox.py`)
+
+- Per attempt: a host directory with the working copy (bind-mounted at `/work/repo`; the agent's file
+  tools need it on the host) and a named volume for dependencies (`/work/deps`: Python virtualenv,
+  Maven repository, Gradle home). No other host path is mounted.
+- Clone and diff run inside a container (`buildpack-deps:bookworm-scm`). The host never runs `git` or any
+  repository code in the working copy. Symbolic links are checked out as plain files, and any link a
+  container creates is deleted after every run.
+- Containers get no host environment (only `HOME`), `--cap-drop ALL`, `no-new-privileges`, and CPU,
+  memory and process limits. Install and clone use the network; tests and agent commands use
+  `--network none`.
+- Maven resolves some artifacts (such as surefire's test provider) only when tests run. If the offline
+  run reports them missing, exactly those are fetched with `dependency:get` (network on, no project
+  code), and the tests run offline again, up to three times.
+- Default images: `python:3.12` (the full image, because many test suites call `git`),
+  `maven:3.9-eclipse-temurin-21`, `gradle:8-jdk21`; configurable under `[sandbox]`.
+
 ## Verification rules (`verify.py`)
 
 An attempt passes verification only if:

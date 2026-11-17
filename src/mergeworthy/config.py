@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
+from mergeworthy.sandbox import SandboxSettings
+
 DEFAULT_CONFIG_PATH = Path("mergeworthy.toml")
 
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
@@ -94,6 +96,7 @@ class Config(_Model):
     limits: Limits = Field(default_factory=Limits)
     eligibility: Eligibility = Field(default_factory=Eligibility)
     budget: Budget = Field(default_factory=Budget)
+    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
 
     @field_validator("languages")
     @classmethod

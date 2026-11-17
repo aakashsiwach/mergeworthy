@@ -55,12 +55,12 @@ in the TOML file cause an error.
 an unclear policy, an assigned issue and an issue with a linked open pull request.
 
 ### T4. Sandbox runner
-- [ ] `sandbox.py`: Docker container per attempt; clone at a commit into a container volume; detect the build
+- [x] `sandbox.py`: Docker container per attempt; clone at a commit into a container volume; detect the build
       tool (architecture.md table); install dependencies; run tests with a timeout; return exit code and
       trimmed output.
-- [ ] No environment variables from the host are passed into the container. Tests run with
+- [x] No environment variables from the host are passed into the container. Tests run with
       `--network none` where possible.
-- [ ] Integration tests that need Docker are marked and skipped when Docker is unavailable; unit tests cover
+- [x] Integration tests that need Docker are marked and skipped when Docker is unavailable; unit tests cover
       command building and detection.
 
 **Acceptance:** runs the test suites of `codeatlas-rag` (Python) and a small Maven fixture project locally.

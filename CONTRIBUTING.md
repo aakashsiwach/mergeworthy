@@ -54,6 +54,14 @@ pytest
 
 CI runs the same checks on Python 3.11 and 3.12, on Ubuntu and Windows.
 
+Integration tests need Docker and network access, so a plain `pytest` skips them. Run them with:
+
+```text
+pytest --run-integration
+```
+
+To include the `codeatlas-rag` test suite, set `MERGEWORTHY_CODEATLAS_COMMIT` to the commit SHA to test.
+
 ## Rules
 
 - One task from `docs/plan.md` per commit, with its checkboxes ticked in the same commit.

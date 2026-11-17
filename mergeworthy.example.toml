@@ -62,3 +62,20 @@ claim_comment_days = 30
 max_spend_usd_per_attempt = 2.0
 # Wall-clock time in minutes.
 max_minutes_per_attempt = 30
+
+# Docker sandbox (docs/architecture.md). Containers get no host environment variables and no secrets.
+[sandbox]
+# Where working copies live on the host; one directory per attempt. Default: ~/.mergeworthy/work
+# work_root = "C:/Users/you/.mergeworthy/work"
+# Images for cloning and for each ecosystem.
+git_image = "buildpack-deps:bookworm-scm"
+python_image = "python:3.12"
+maven_image = "maven:3.9-eclipse-temurin-21"
+gradle_image = "gradle:8-jdk21"
+# Time limits for dependency installation and for one agent command.
+install_timeout_minutes = 20
+command_timeout_minutes = 10
+# Resource limits per container.
+cpus = 2.0
+memory = "4g"
+pids_limit = 512

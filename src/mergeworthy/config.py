@@ -64,6 +64,13 @@ class Eligibility(_Model):
     claim_comment_days: int = Field(default=30, ge=1)
 
 
+class AgentSettings(_Model):
+    """The coding agent (Claude Agent SDK)."""
+
+    model: str = Field(default="claude-opus-5-5", min_length=1)
+    max_turns: int = Field(default=80, ge=1)
+
+
 class Budget(_Model):
     """Hard caps for one attempt."""
 
@@ -96,6 +103,7 @@ class Config(_Model):
     limits: Limits = Field(default_factory=Limits)
     eligibility: Eligibility = Field(default_factory=Eligibility)
     budget: Budget = Field(default_factory=Budget)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
 
     @field_validator("languages")

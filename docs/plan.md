@@ -66,13 +66,13 @@ an unclear policy, an assigned issue and an issue with a linked open pull reques
 **Acceptance:** runs the test suites of `codeatlas-rag` (Python) and a small Maven fixture project locally.
 
 ### T5. Coding agent adapter
-- [ ] `agent/`: the `CodingAgent` protocol and a Claude Agent SDK implementation. Check the SDK's current
+- [x] `agent/`: the `CodingAgent` protocol and a Claude Agent SDK implementation. Check the SDK's current
       documentation for exact option and tool names; do not guess them.
-- [ ] Built-in shell tool disabled; file read and edit tools limited to the working copy; one custom tool
+- [x] Built-in shell tool disabled; file read and edit tools limited to the working copy; one custom tool
       `run_in_sandbox`.
-- [ ] Issue text passed as clearly marked untrusted data. Spend cap and time limit enforced.
-- [ ] A fake agent for tests that applies a predefined patch.
-- [ ] Call `recheck.ensure_still_available` immediately before the agent starts.
+- [x] Issue text passed as clearly marked untrusted data. Spend cap and time limit enforced.
+- [x] A fake agent for tests that applies a predefined patch.
+- [x] Call `recheck.ensure_still_available` immediately before the agent starts.
 
 **Acceptance:** with the fake agent, an end-to-end test goes from issue to diff; the real adapter is tested
 with mocks for its configuration (no shell tool, custom tool registered, budget passed).

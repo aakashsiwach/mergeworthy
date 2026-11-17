@@ -399,6 +399,34 @@ class Ledger:
             )
         return attempt_id
 
+    def update_attempt(self, attempt_id: int, **fields: Any) -> None:
+        """Record results on an attempt: ``branch``, ``diff_stats``, ``test_results``, ``spend_usd``."""
+        allowed = {"branch", "diff_stats", "test_results", "spend_usd"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise LedgerError(f"unknown attempt fields: {sorted(unknown)}")
+        if not fields:
+            return
+        values = {k: _json(v) if k in {"diff_stats", "test_results"} else v for k, v in fields.items()}
+        sets = ", ".join(f"{k} = ?" for k in values)
+        with self._tx() as conn:
+            cur = conn.execute(
+                f"UPDATE attempts SET {sets}, updated_at = ? WHERE id = ?",
+                (*values.values(), _now(), attempt_id),
+            )
+            if cur.rowcount != 1:
+                raise LedgerError(f"no attempt with id {attempt_id}")
+
+    def attempt_details(self, attempt_id: int) -> dict[str, Any]:
+        row = self._conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None:
+            raise LedgerError(f"no attempt with id {attempt_id}")
+        record = dict(row)
+        for key in ("diff_stats", "test_results", "review_reasons"):
+            if record[key] is not None:
+                record[key] = json.loads(record[key])
+        return record
+
     def attempts_for_issue(self, issue_id: int) -> list[Attempt]:
         rows = self._conn.execute(
             "SELECT * FROM attempts WHERE issue_id = ? ORDER BY id", (issue_id,)

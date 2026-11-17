@@ -88,6 +88,24 @@ class CodingAgent(Protocol):
 `Task` holds the issue title and body (marked as untrusted), the repository's conventions summary and the
 policy limits. `AttemptResult` holds the diff, the agent's explanation, the commands it ran and the spend.
 
+### Claude Agent SDK adapter (`agent/claude.py`)
+
+- Built-in tools: `Read`, `Edit`, `Write`, `Glob`, `Grep` only (`tools`); `Bash`, web, subagent, skill and
+  other built-ins are removed (`disallowed_tools`). One in-process MCP tool, `run_in_sandbox`
+  (`mcp__sandbox__run_in_sandbox`), runs a command in the sandbox without network.
+- A `PreToolUse` hook (runs for every call) and `can_use_tool` deny any other tool and any path or glob
+  outside the working copy.
+- `setting_sources=[]`, `strict_mcp_config=True`, no skills or plugins: nothing in the untrusted working
+  copy (`.claude/`, `.mcp.json`, `CLAUDE.md`) can configure the agent.
+- `GITHUB_TOKEN`, `GH_TOKEN` and similar are blanked in the agent process environment.
+- Spend: `max_budget_usd` from `[budget]`; turns: `max_turns` from `[agent]`; wall-clock: a timeout from
+  `[budget]`. The issue is passed inside `<untrusted_issue_*>` markers, with the markers escaped in the text.
+
+`work.run_attempt` drives one attempt: re-check, `working`, clone at the default branch's head, install,
+baseline tests (must pass within `max_test_minutes`; this also measures the deferred eligibility check and
+warms Maven's offline cache), agent, then the diff and spend are recorded. Any failure moves the attempt to
+`failed` with the reason.
+
 ## Build tool detection (stage 1)
 
 | Ecosystem | Detected by | Test command |

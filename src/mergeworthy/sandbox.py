@@ -364,6 +364,18 @@ class Sandbox:
             raise SandboxError(f"working copy {self.workdir} is not empty")
         shutil.copytree(source, self.workdir, dirs_exist_ok=True, symlinks=True)
         self.remove_symlinks()
+        script = "\n".join(
+            [
+                "set -e",
+                f"{GIT} init --quiet",
+                "git config core.symlinks false",
+                f"{GIT} add --all",
+                f"{GIT} -c user.name=mergeworthy -c user.email=mergeworthy@localhost commit -q -m baseline",
+            ]
+        )
+        result = self._run(self.settings.git_image, script, network=False, timeout_seconds=300)
+        if not result.ok:
+            raise SandboxError(f"could not record the baseline commit: {trim(result.output, 500)}")
 
     def destroy(self) -> None:
         """Remove the dependency volume and the working copy."""

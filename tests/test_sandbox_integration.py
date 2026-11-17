@@ -61,3 +61,24 @@ def test_codeatlas_rag_tests_run(box: Sandbox) -> None:
     result = box.run_tests(plan, timeout_minutes=15)
     assert result.ok, result.output
     assert box.diff() == ""
+
+
+def test_fake_agent_end_to_end_in_docker(box: Sandbox) -> None:
+    from mergeworthy.agent import Budget, Task
+    from mergeworthy.agent.fake import FakeAgent
+    from mergeworthy.work import BoundSandbox
+
+    box.load_local(FIXTURES / "maven-sample")
+    plan = box.detect()
+    assert box.install(plan).ok
+    assert box.run_tests(plan, timeout_minutes=15).ok  # baseline, as work.py does
+    source = "src/main/java/example/Calculator.java"
+    fixed = (box.workdir / source).read_text(encoding="utf-8").replace("a + b", "Math.addExact(a, b)")
+    agent = FakeAgent(files={source: fixed}, commands=["mvn -B -q -Dmaven.repo.local=/work/deps/m2 -o test"])
+    task = Task(
+        "local/maven-sample", 1, "https://github.com/local/maven-sample/issues/1", "t", "b", plan.test
+    )
+    result = agent.attempt(task, box.workdir, BoundSandbox(box, plan), Budget(1.0, 10, 5))
+    assert [c.exit_code for c in result.commands] == [0]
+    assert "-        return a + b;" in result.diff
+    assert "+        return Math.addExact(a, b);" in result.diff

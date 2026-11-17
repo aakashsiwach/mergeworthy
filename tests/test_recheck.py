@@ -171,3 +171,40 @@ def test_terminal_attempt_is_refused(ledger: Ledger) -> None:
     ledger.transition(attempt, AttemptState.SKIPPED, "changed our mind")
     with pytest.raises(NoLongerAvailable, match="already skipped"):
         ensure_still_available(gh, ledger, Config(), attempt)
+
+
+def paused_attempt(gh: FakeGitHub, ledger: Ledger) -> int:
+    """An attempt in progress that the re-check paused on an uncertain pull request mention."""
+    attempt = eligible_attempt(gh, ledger)
+    ledger.transition(attempt, AttemptState.WORKING, "started")
+    gh.repos[REPO].mentions[12] = [mention("Related to #12")]
+    with pytest.raises(AwaitingHumanDecision):
+        ensure_still_available(gh, ledger, Config(), attempt)
+    return attempt
+
+
+def test_deny_abandons_a_paused_attempt(ledger: Ledger) -> None:
+    gh = github()
+    attempt = paused_attempt(gh, ledger)
+    outcome = record_decision(ledger, f"{REPO}#12", "no_open_pull_request", Decision.DENY, "that PR fixes it")
+    assert outcome.abandoned_attempts == [attempt]
+    assert outcome.resumable_attempts == []
+    assert ledger.get_attempt(attempt).state is AttemptState.ABANDONED
+    assert "a human denied no_open_pull_request" in ledger.transitions(attempt)[-1].reason
+    with pytest.raises(NoLongerAvailable):
+        ensure_still_available(gh, ledger, Config(), attempt)
+
+
+def test_allow_resumes_a_paused_attempt(ledger: Ledger) -> None:
+    gh = github()
+    attempt = paused_attempt(gh, ledger)
+    outcome = record_decision(ledger, f"{REPO}#12", "no_open_pull_request", Decision.ALLOW, "unrelated PR")
+    assert outcome.resumable_attempts == [attempt]
+    assert outcome.abandoned_attempts == []
+    assert ledger.get_attempt(attempt).state is AttemptState.WORKING
+    assert ensure_still_available(gh, ledger, Config(), attempt).eligible
+    # A new mention changes the content hash: the attempt pauses again and a new question is asked.
+    gh.repos[REPO].mentions[12].append(mention("See #12", number=9))
+    with pytest.raises(AwaitingHumanDecision):
+        ensure_still_available(gh, ledger, Config(), attempt)
+    assert len(ledger.pending_decisions()) == 1

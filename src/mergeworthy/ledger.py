@@ -528,14 +528,17 @@ class Ledger:
         ).fetchall()
         return [self._decision(row) for row in rows]
 
-    def attempts_for_subject(self, subject: str, state: AttemptState) -> list[Attempt]:
-        """Attempts in ``state`` for a repository (``owner/repo``) or one issue (``owner/repo#n``)."""
+    def attempts_for_subject(self, subject: str, state: AttemptState | None = None) -> list[Attempt]:
+        """Attempts for a repository (``owner/repo``) or an issue (``owner/repo#n``), optionally by state."""
         name, _, number = subject.partition("#")
         query = (
             "SELECT a.* FROM attempts a JOIN issues i ON i.id = a.issue_id"
-            " JOIN repositories r ON r.id = i.repository_id WHERE r.full_name = ? AND a.state = ?"
+            " JOIN repositories r ON r.id = i.repository_id WHERE r.full_name = ?"
         )
-        params: list[Any] = [name, state.value]
+        params: list[Any] = [name]
+        if state is not None:
+            query += " AND a.state = ?"
+            params.append(state.value)
         if number:
             query += " AND i.number = ?"
             params.append(int(number))

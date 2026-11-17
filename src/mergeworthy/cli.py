@@ -198,5 +198,10 @@ def decide_command(
     console.print(safe(f"recorded: {decision.value} {outcome.record.subject} {check}"))
     if outcome.skipped_attempts:
         console.print(f"skipped attempts: {', '.join(map(str, outcome.skipped_attempts))}")
+    if outcome.abandoned_attempts:
+        console.print(f"abandoned attempts: {', '.join(map(str, outcome.abandoned_attempts))}")
+    if outcome.resumable_attempts:
+        ids = ", ".join(map(str, outcome.resumable_attempts))
+        console.print(f"resumable attempts: {ids} (run `mergeworthy work` again to continue)")
     if decision is Decision.ALLOW:
         console.print(safe(f"run `mergeworthy check {outcome.record.subject}` to re-evaluate."))

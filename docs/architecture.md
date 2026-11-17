@@ -208,7 +208,9 @@ with 0 (eligible), 1 (not eligible or error), 2 (configuration error) or 3 (a hu
 uncertain linked pull request) becomes an open question in `human_decisions`, tied to a SHA-256 hash of the
 content it was about: for the AI policy, the repository's policy files. `mergeworthy decide` answers it with
 a required reason. The answer is reused by every later `check` while the hash is unchanged; when the content
-changes, the question is asked again. A denial moves waiting attempts to `skipped`.
+changes, the question is asked again. A denial moves attempts waiting in `needs_human` to `skipped` and
+attempts paused mid-way (by the re-check before work or submission) to `abandoned`. An approval leaves paused
+attempts resumable: the next `mergeworthy work` re-checks, reuses the decision and continues.
 
 **Linked pull requests.** An issue has a linked pull request if the issue timeline shows an open pull
 request cross-referencing it, or if a search for open pull requests mentioning the issue number finds one

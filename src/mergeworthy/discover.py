@@ -21,7 +21,7 @@ from mergeworthy.eligibility import (
     check_repository,
 )
 from mergeworthy.github import Issue
-from mergeworthy.ledger import AttemptState, Decision, DecisionRecord, Ledger
+from mergeworthy.ledger import TERMINAL_STATES, AttemptState, Decision, DecisionRecord, Ledger
 
 
 class DiscoveryReader(GitHubReader, Protocol):
@@ -240,19 +240,34 @@ def check_and_record(
 class DecisionOutcome:
     record: DecisionRecord
     skipped_attempts: list[int]
+    abandoned_attempts: list[int]
+    resumable_attempts: list[int]
 
 
 def record_decision(
     ledger: Ledger, subject: str, check_name: str, decision: Decision, reason: str
 ) -> DecisionOutcome:
-    """Answer an open question. A denial skips the waiting attempts it covers; an approval takes effect on the
-    next ``check``, which re-runs every other check first."""
+    """Answer an open question and resolve every attempt that was waiting on it.
+
+    - Deny: attempts in ``needs_human`` move to ``skipped``; attempts paused mid-way (for example by the
+      re-check before work or submission) move to ``abandoned``.
+    - Allow: attempts in ``needs_human`` move on at the next ``check``, which re-runs the other checks first;
+      paused attempts are resumable, because the re-check reuses this decision while the content is unchanged.
+    """
     full_name, number = parse_target(subject)
     normalised = full_name if number is None else f"{full_name}#{number}"
     record = ledger.decide(normalised, check_name, decision, reason)
-    skipped = []
-    if decision is Decision.DENY:
-        for attempt in ledger.attempts_for_subject(normalised, AttemptState.NEEDS_HUMAN):
-            ledger.transition(attempt.id, AttemptState.SKIPPED, f"a human denied {check_name}: {reason}")
-            skipped.append(attempt.id)
-    return DecisionOutcome(record, skipped)
+    skipped: list[int] = []
+    abandoned: list[int] = []
+    resumable: list[int] = []
+    for attempt in ledger.attempts_for_subject(normalised):
+        if attempt.state in TERMINAL_STATES or attempt.state is AttemptState.DISCOVERED:
+            continue
+        waiting = attempt.state is AttemptState.NEEDS_HUMAN
+        if decision is Decision.DENY:
+            target = AttemptState.SKIPPED if waiting else AttemptState.ABANDONED
+            ledger.transition(attempt.id, target, f"a human denied {check_name}: {reason}")
+            (skipped if waiting else abandoned).append(attempt.id)
+        elif not waiting:
+            resumable.append(attempt.id)
+    return DecisionOutcome(record, skipped, abandoned, resumable)

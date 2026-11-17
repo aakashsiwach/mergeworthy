@@ -612,6 +612,13 @@ class Ledger:
         rows = self._conn.execute(query, (status,) if status else ()).fetchall()
         return [{**dict(r), "context": json.loads(r["context"])} for r in rows]
 
+    def select(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        """Read-only queries for reports. Only a single SELECT statement is accepted."""
+        statement = sql.strip().rstrip(";")
+        if not statement.upper().startswith("SELECT") or ";" in statement:
+            raise LedgerError("only a single SELECT statement is allowed")
+        return [dict(row) for row in self._conn.execute(statement, params).fetchall()]
+
     def attempt_details(self, attempt_id: int) -> dict[str, Any]:
         row = self._conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()
         if row is None:

@@ -258,6 +258,11 @@ run on the current head becomes a `fix` draft, and a request to close (or an AI 
 draft with a short thank-you. Drafts are stored once per source in `drafts` and wait for a human; writing and
 sending replies is not built yet.
 
+`scoreboard` writes `index.html` and `scoreboard.md` from the ledger with every number in evaluation.md section
+2. Skip reasons are grouped into policy, activity, tests and scope from the recorded eligibility checks. Text from
+maintainers is HTML-escaped in both files. The snapshot test (`tests/snapshots/`) is regenerated with
+`UPDATE_SNAPSHOTS=1 pytest tests/test_scoreboard.py`, and the diff must be reviewed.
+
 `discover` and `check` only read from GitHub. `discover` stores candidates and opens one attempt per new issue in
 `discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible`, `needs_human` or
 `skipped` (a check that fails outright wins over one that is unclear). `check` exits

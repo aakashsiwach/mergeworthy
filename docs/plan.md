@@ -111,7 +111,7 @@ template and dry-run output.
 **Acceptance:** tests for each pull request outcome and for the deny-list rule.
 
 ### T10. Scoreboard
-- [ ] `mergeworthy scoreboard`: static HTML and Markdown from the ledger with every number in
+- [x] `mergeworthy scoreboard`: static HTML and Markdown from the ledger with every number in
       evaluation.md section 2.
 
 **Acceptance:** snapshot test from a fixture ledger.

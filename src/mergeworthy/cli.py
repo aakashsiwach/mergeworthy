@@ -35,6 +35,7 @@ from mergeworthy.ledger import AttemptState, Decision, Ledger, LedgerError
 from mergeworthy.recheck import AwaitingHumanDecision, NoLongerAvailable
 from mergeworthy.review import ClaudeReviewer, Reviewer
 from mergeworthy.sandbox import SandboxError, docker_available
+from mergeworthy.scoreboard import write as write_scoreboard
 from mergeworthy.submit import GitHubWriter, SubmissionRefused, prepare_submission, render_plan, submit
 from mergeworthy.work import STARTABLE, SandboxFactory, default_sandbox, plan_work, run_attempt
 
@@ -506,3 +507,17 @@ def followup_command(config_path: ConfigOption = None) -> None:
             )
         console.print(table)
         console.print(f"{len(drafts)} drafts wait for a human; nothing was posted.")
+
+
+@app.command(name="scoreboard")
+def scoreboard_command(
+    output: Annotated[
+        Path, typer.Option("--output", "-o", help="Directory for index.html and scoreboard.md.")
+    ] = Path("scoreboard"),
+    config_path: ConfigOption = None,
+) -> None:
+    """Build the results page (Markdown and static HTML) from the ledger."""
+    config = _load(config_path)
+    with Ledger(config.ledger_path) as ledger:
+        md, page = write_scoreboard(ledger, output, datetime.now(UTC))
+    console.print(safe(f"wrote {md} and {page}"))

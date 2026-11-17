@@ -34,6 +34,13 @@ language: java
 
 Self-review precision matters most: it predicts what maintainers would see.
 
+### Choosing models and effort
+
+The coding agent's model is configurable (`[agent] model` in `mergeworthy.toml`, default `claude-opus-5-5`),
+and so is the self-review model. The default is provisional: the replay benchmark decides it. A model or
+setting becomes the default only when it does better on `dev` on self-review precision first, then solve rate,
+then cost per solved case, and is then confirmed once on `test`. Record each comparison and its result.
+
 ### Splits
 Cases are split into `dev` and `test`. Prompts, rubrics and limits are tuned on `dev` only. `test` is run once
 per release with `--final`, and those numbers are published. Test cases are chosen and written independently

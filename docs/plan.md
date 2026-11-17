@@ -84,7 +84,7 @@ with mocks for its configuration (no shell tool, custom tool registered, budget 
 **Acceptance:** tests for each verification rule and for review verdict parsing, including malformed output.
 
 ### T7. Human approval
-- [ ] `mergeworthy review`: lists waiting attempts; shows issue, summary, diff (paged), test results,
+- [x] `mergeworthy review`: lists waiting attempts; shows issue, summary, diff (paged), test results,
       verification and review results, policy checks and spend; approve or reject with a required reason.
 
 **Acceptance:** tests drive the CLI with simulated input; rejection without a reason is refused.

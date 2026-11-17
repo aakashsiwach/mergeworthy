@@ -208,7 +208,7 @@ mergeworthy discover [--language java|python] [--limit N]    find and record can
 mergeworthy check REPO_OR_ISSUE                              run eligibility checks and print reasons
 mergeworthy decide [SUBJECT CHECK --allow|--deny -r REASON]  list or answer questions for a human
 mergeworthy work ISSUE_URL [--dry-run/--no-dry-run]          run one attempt end to end up to approval
-mergeworthy review                                           approve or reject waiting attempts
+mergeworthy review [ATTEMPT] [--no-pager]                    approve or reject waiting attempts
 mergeworthy submit ATTEMPT_ID                                submit an approved attempt
 mergeworthy followup                                         check open pull requests, draft replies
 mergeworthy scoreboard [--output DIR]                        build the results page
@@ -221,6 +221,13 @@ mergeworthy replay [--split dev|test] [--final]              run the replay benc
 ledger, prints the steps it would take, and starts no sandbox and spends nothing. `--no-dry-run` records the
 check and runs the attempt. It refuses repositories whose contributing guide asks to claim issues first until
 the claim flow (T14) exists. Exit codes: 0 done, 1 not possible or failed, 3 a human must decide.
+
+`review` lists attempts in `awaiting_approval`, then shows one: the issue, the agent's summary (marked as
+unverified claims), the full diff (paged), baseline and agent test runs, verification, self-review, policy
+checks and spend. Approve or reject both need a reason; an empty reason records nothing. Approval moves the
+attempt to `approved` and pins the SHA-256 of the exact diff that was shown and its file list
+(`approved_diff_sha256`, `approved_files`); submission (T8) must send exactly that diff. Text from issues,
+repositories and models is stripped of control characters and escape sequences before display.
 
 `discover` and `check` only read from GitHub. `discover` stores candidates and opens one attempt per new issue in
 `discovered`. `check` records the results in the ledger and moves a `discovered` attempt to `eligible`, `needs_human` or

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -16,6 +17,7 @@ from rich.text import Text
 
 from mergeworthy import __version__
 from mergeworthy.agent import CodingAgent
+from mergeworthy.approve import ApprovalError, approve, reject, render_diff, render_summary, waiting_attempts
 from mergeworthy.config import Config, ConfigError, load_config, load_secrets
 from mergeworthy.discover import (
     CheckOutcome,
@@ -304,3 +306,78 @@ def work_command(
         console.print(f"spend: ${outcome.result.spend_usd:.2f}")
     if outcome.state is not AttemptState.AWAITING_APPROVAL:
         raise typer.Exit(1)
+
+
+def _show(text: str, pager: bool) -> None:
+    if pager:
+        click.echo_via_pager(text)
+    else:
+        click.echo(text)
+
+
+@app.command(name="review")
+def review_command(
+    attempt: Annotated[
+        int | None, typer.Argument(help="Attempt to review; omit to list waiting attempts.")
+    ] = None,
+    pager: Annotated[bool, typer.Option("--pager/--no-pager", help="Page the diff.")] = True,
+    config_path: ConfigOption = None,
+) -> None:
+    """Approve or reject attempts waiting for a human. Every decision needs a reason."""
+    config = _load(config_path)
+    with Ledger(config.ledger_path) as ledger:
+        waiting = waiting_attempts(ledger)
+        if attempt is None:
+            if not waiting:
+                console.print("no attempts are waiting for approval")
+                return
+            table = Table("attempt", "issue", "title", "files", "lines", "spend", "self-review")
+            for item in waiting:
+                table.add_row(
+                    str(item.attempt_id),
+                    safe(item.issue_ref),
+                    safe(item.title),
+                    str(item.files),
+                    str(item.lines),
+                    f"${item.spend_usd:.2f}",
+                    item.verdict or "",
+                )
+            console.print(table)
+            choice = typer.prompt("Attempt to review (empty to quit)", default="", show_default=False).strip()
+            if not choice:
+                return
+            if not choice.isdigit():
+                console.print("not an attempt number", style="red")
+                raise typer.Exit(2)
+            attempt = int(choice)
+        if attempt not in {item.attempt_id for item in waiting}:
+            console.print(f"attempt {attempt} is not waiting for approval", style="red")
+            raise typer.Exit(1)
+
+        click.echo(render_summary(ledger, attempt))
+        shown_diff = render_diff(ledger, attempt)
+        click.echo("\n== Diff " + "=" * 66)
+        _show(shown_diff, pager)
+
+        action = typer.prompt("Approve, reject or skip? [a/r/s]", default="s").strip().lower()
+        if action in ("s", "skip"):
+            console.print("skipped; nothing recorded")
+            return
+        if action not in ("a", "approve", "r", "reject"):
+            console.print("answer a, r or s; nothing recorded", style="red")
+            raise typer.Exit(2)
+        reason = typer.prompt("Reason (required)", default="", show_default=False).strip()
+        if not reason:
+            console.print("a reason is required; nothing recorded", style="red")
+            raise typer.Exit(1)
+        try:
+            if action in ("a", "approve"):
+                digest = approve(ledger, attempt, reason, shown_diff)
+                console.print(f"attempt {attempt} approved (diff sha256 {digest[:12]})", style="green")
+                console.print("submission (T8) will send exactly this diff; it is dry-run by default")
+            else:
+                reject(ledger, attempt, reason)
+                console.print(f"attempt {attempt} rejected", style="yellow")
+        except ApprovalError as exc:
+            console.print(safe(f"error: {exc}"), style="red")
+            raise typer.Exit(1) from exc

@@ -7,6 +7,7 @@ Attempt states move only along the edges of the state diagram in docs/architectu
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -74,7 +75,7 @@ assert all(not ALLOWED_TRANSITIONS[s] for s in TERMINAL_STATES)
 assert all(ALLOWED_TRANSITIONS[s] for s in set(AttemptState) - TERMINAL_STATES)
 
 
-_JSON_FIELDS = ("diff_stats", "test_results", "review_reasons", "commands", "verification")
+_JSON_FIELDS = ("diff_stats", "test_results", "review_reasons", "commands", "verification", "approved_files")
 
 
 class LedgerError(Exception):
@@ -219,7 +220,23 @@ def _migration_3(conn: sqlite3.Connection) -> None:
     )
 
 
-MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (_migration_1, _migration_2, _migration_3)
+def _migration_4(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        -- What exactly a human approved: submission must send this diff and these files, nothing else.
+        ALTER TABLE attempts ADD COLUMN approved_diff_sha256 TEXT;
+        ALTER TABLE attempts ADD COLUMN approved_files TEXT;  -- JSON list
+        ALTER TABLE attempts ADD COLUMN approved_at TEXT;
+        """
+    )
+
+
+MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
+    _migration_1,
+    _migration_2,
+    _migration_3,
+    _migration_4,
+)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
@@ -442,6 +459,39 @@ class Ledger:
             )
             if cur.rowcount != 1:
                 raise LedgerError(f"no attempt with id {attempt_id}")
+
+    def record_approval(self, attempt_id: int, diff_sha256: str, files: list[str], reason: str) -> Attempt:
+        """Move awaiting_approval to approved and pin the exact diff and files that were approved."""
+        if not reason.strip():
+            raise LedgerError("a reason is required for every approval")
+        if not re.fullmatch(r"[0-9a-f]{64}", diff_sha256):
+            raise LedgerError("diff_sha256 must be a SHA-256 hex digest")
+        now = _now()
+        with self._tx() as conn:
+            current = self.get_attempt(attempt_id).state
+            if not is_allowed_transition(current, AttemptState.APPROVED):
+                raise InvalidTransition(attempt_id, current, AttemptState.APPROVED)
+            cur = conn.execute(
+                "UPDATE attempts SET state = ?, approved_diff_sha256 = ?, approved_files = ?,"
+                " approved_at = ?, updated_at = ? WHERE id = ? AND state = ?",
+                (
+                    S.APPROVED.value,
+                    diff_sha256,
+                    json.dumps(sorted(files)),
+                    now,
+                    now,
+                    attempt_id,
+                    current.value,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise LedgerError(f"attempt {attempt_id} changed state concurrently")
+            conn.execute(
+                "INSERT INTO transitions (attempt_id, from_state, to_state, reason, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (attempt_id, current.value, S.APPROVED.value, f"{reason} (diff sha256 {diff_sha256})", now),
+            )
+        return self.get_attempt(attempt_id)
 
     def attempt_details(self, attempt_id: int) -> dict[str, Any]:
         row = self._conn.execute("SELECT * FROM attempts WHERE id = ?", (attempt_id,)).fetchone()

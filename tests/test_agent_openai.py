@@ -111,3 +111,39 @@ def test_file_tools_cannot_escape_repository_or_access_git(tmp_path: Path) -> No
         agent._execute("write_file", {"path": "../escape", "content": "x"}, tmp_path, sandbox, [])
     with pytest.raises(ValueError):
         agent._execute("read_file", {"path": ".git/config"}, tmp_path, sandbox, [])
+
+def test_missing_usage_fails_without_counting_request_as_free(tmp_path: Path) -> None:
+    client = FakeClient([
+        FakeResponse({"choices": [{"message": {"role": "assistant", "content": "done"}}]})
+    ])
+    agent = OpenAICodingAgent(
+        model="router/model",
+        api_key="key",
+        base_url="https://router.test/v1",
+        client=client,
+        prices=prices(),
+    )
+    result = agent.attempt(task(), tmp_path, FakeSandbox(tmp_path), Budget(1, 1, 2))
+    assert result.status is AttemptStatus.FAILED
+    assert "missing valid token usage" in (result.error or "")
+    assert result.spend_usd == 0
+
+
+def test_incomplete_usage_fails_without_counting_request_as_free(tmp_path: Path) -> None:
+    client = FakeClient([
+        FakeResponse({
+            "usage": {"prompt_tokens": 100},
+            "choices": [{"message": {"role": "assistant", "content": "done"}}],
+        })
+    ])
+    agent = OpenAICodingAgent(
+        model="router/model",
+        api_key="key",
+        base_url="https://router.test/v1",
+        client=client,
+        prices=prices(),
+    )
+    result = agent.attempt(task(), tmp_path, FakeSandbox(tmp_path), Budget(1, 1, 2))
+    assert result.status is AttemptStatus.FAILED
+    assert "missing valid token usage" in (result.error or "")
+    assert result.spend_usd == 0

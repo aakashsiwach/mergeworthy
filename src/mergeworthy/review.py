@@ -259,8 +259,9 @@ class ClaudeReviewer:
 class OpenAIReviewer:
     """Fail-closed self-review using an OpenAI-compatible chat-completions endpoint."""
 
-    def __init__(self, *, model: str, api_key: str, base_url: str,
-                 prices: Prices | None = None, client: Any = None) -> None:
+    def __init__(
+        self, *, model: str, api_key: str, base_url: str, prices: Prices | None = None, client: Any = None
+    ) -> None:
         self.model = model
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -312,16 +313,25 @@ class OpenAIReviewer:
             served_by = payload.get("model") or self.model
             cost = self.prices.cost(served_by, usage["input_tokens"], usage["output_tokens"])
             checked = (
-                f"no price for {served_by}" if cost is None
-                else self.prices.checked.isoformat() if self.prices.checked else "prices never checked"
+                f"no price for {served_by}"
+                if cost is None
+                else self.prices.checked.isoformat()
+                if self.prices.checked
+                else "prices never checked"
             )
             try:
                 parsed = parse_review(text, rubric.version)
             except MalformedReview as exc:
                 return error_result(f"malformed review: {exc}", rubric.version, served_by)
             return ReviewResult(
-                parsed.verdict, parsed.answers, parsed.reasons, rubric.version, served_by,
-                usage, round(cost or 0.0, 6), checked,
+                parsed.verdict,
+                parsed.answers,
+                parsed.reasons,
+                rubric.version,
+                served_by,
+                usage,
+                round(cost or 0.0, 6),
+                checked,
             )
         except Exception as exc:
             return error_result(

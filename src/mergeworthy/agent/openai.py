@@ -1,4 +1,5 @@
 """OpenAI-compatible coding agent adapter."""
+
 from __future__ import annotations
 
 import json
@@ -16,8 +17,16 @@ from mergeworthy.sandbox import trim
 class OpenAICodingAgent:
     """Tool-calling coding agent for OpenAI-compatible APIs such as NaraRouter."""
 
-    def __init__(self, *, model: str, api_key: str, base_url: str,
-                 timeout: float = 60.0, client: Any = None, prices: Prices | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        api_key: str,
+        base_url: str,
+        timeout: float = 60.0,
+        client: Any = None,
+        prices: Prices | None = None,
+    ) -> None:
         self.model = model
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -40,13 +49,26 @@ class OpenAICodingAgent:
                 ["command"],
             ),
         }
-        return [{"type": "function", "function": {"name": name, "description": desc,
-                "parameters": {"type": "object", "properties": props, "required": required,
-                               "additionalProperties": False}}}
-                for name, (desc, props, required) in definitions.items()]
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": desc,
+                    "parameters": {
+                        "type": "object",
+                        "properties": props,
+                        "required": required,
+                        "additionalProperties": False,
+                    },
+                },
+            }
+            for name, (desc, props, required) in definitions.items()
+        ]
 
-    def _execute(self, name: str, args: dict[str, Any], root: Path,
-                 sandbox: AgentSandbox, records: list[CommandRecord]) -> str:
+    def _execute(
+        self, name: str, args: dict[str, Any], root: Path, sandbox: AgentSandbox, records: list[CommandRecord]
+    ) -> str:
         if name in ("read_file", "write_file"):
             path = (root / str(args["path"])).resolve()
             base = root.resolve()
@@ -66,8 +88,7 @@ class OpenAICodingAgent:
             return f"exit={result.exit_code}; timed_out={result.timed_out}\n{trim(result.output, 12000)}"
         raise ValueError(f"unknown tool: {name}")
 
-    def attempt(self, task: Task, workdir: Path, sandbox: AgentSandbox,
-                budget: Budget) -> AttemptResult:
+    def attempt(self, task: Task, workdir: Path, sandbox: AgentSandbox, budget: Budget) -> AttemptResult:
         if not self.api_key:
             return AttemptResult(AttemptStatus.FAILED, error="NARAROUTER_API_KEY is not set")
         if self.prices is None or self.prices.models.get(self.model) is None:
@@ -113,17 +134,20 @@ class OpenAICodingAgent:
                     f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     timeout=min(self.timeout, remaining),
-                    json={"model": self.model, "messages": messages, "tools": self._tools(),
-                          "tool_choice": "auto", "temperature": 0.1},
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "tools": self._tools(),
+                        "tool_choice": "auto",
+                        "temperature": 0.1,
+                    },
                 )
                 response.raise_for_status()
                 payload = response.json()
                 message = payload["choices"][0]["message"]
                 usage = payload.get("usage")
                 input_tokens = usage.get("prompt_tokens", usage.get("input_tokens")) if usage else None
-                output_tokens = (
-                    usage.get("completion_tokens", usage.get("output_tokens")) if usage else None
-                )
+                output_tokens = usage.get("completion_tokens", usage.get("output_tokens")) if usage else None
                 if (
                     not isinstance(input_tokens, int)
                     or isinstance(input_tokens, bool)
@@ -158,23 +182,38 @@ class OpenAICodingAgent:
                 calls = message.get("tool_calls") or []
                 if not calls:
                     diff = sandbox.diff()
-                    return AttemptResult(AttemptStatus.COMPLETED if diff.strip() else AttemptStatus.FAILED,
-                        diff=diff, explanation=message.get("content") or "", commands=records,
-                        spend_usd=round(spend, 6), error=None if diff.strip() else "agent made no changes")
+                    return AttemptResult(
+                        AttemptStatus.COMPLETED if diff.strip() else AttemptStatus.FAILED,
+                        diff=diff,
+                        explanation=message.get("content") or "",
+                        commands=records,
+                        spend_usd=round(spend, 6),
+                        error=None if diff.strip() else "agent made no changes",
+                    )
                 for call in calls:
                     fn = call["function"]
                     try:
-                        result = self._execute(fn["name"], json.loads(fn.get("arguments") or "{}"),
-                                               workdir, sandbox, records)
+                        result = self._execute(
+                            fn["name"], json.loads(fn.get("arguments") or "{}"), workdir, sandbox, records
+                        )
                     except Exception as exc:
                         result = f"Tool error: {type(exc).__name__}: {exc}"
-                    messages.append({"role": "tool", "tool_call_id": call["id"],
-                                     "content": str(result)[:12000]})
-            return AttemptResult(AttemptStatus.BUDGET_EXCEEDED, commands=records,
-                                 spend_usd=round(spend, 6), error="maximum turns reached")
+                    messages.append(
+                        {"role": "tool", "tool_call_id": call["id"], "content": str(result)[:12000]}
+                    )
+            return AttemptResult(
+                AttemptStatus.BUDGET_EXCEEDED,
+                commands=records,
+                spend_usd=round(spend, 6),
+                error="maximum turns reached",
+            )
         except (httpx.HTTPError, KeyError, ValueError) as exc:
-            return AttemptResult(AttemptStatus.FAILED, commands=records,
-                                 spend_usd=round(spend, 6), error=f"{type(exc).__name__}: {exc}")
+            return AttemptResult(
+                AttemptStatus.FAILED,
+                commands=records,
+                spend_usd=round(spend, 6),
+                error=f"{type(exc).__name__}: {exc}",
+            )
         finally:
             if owns_client:
                 client.close()

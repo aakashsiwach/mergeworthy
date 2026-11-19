@@ -92,6 +92,25 @@ BEDROCK = {
 }
 
 
+def test_openai_provider_and_secret_loading() -> None:
+    config = parse_config(
+        {
+            "provider": {
+                "name": "openai",
+                "base_url": "https://router.bynara.id/v1",
+                "agent_model": "auto/bynara",
+                "review_model": "auto/bynara",
+            }
+        }
+    )
+    assert config.provider.agent == "auto/bynara"
+    assert config.provider.review == "auto/bynara"
+    assert config.active_prices.models == {}
+    secrets = load_secrets({"NARAROUTER_API_KEY": "sk-nry-test-key"})
+    assert secrets.openai_api_key is not None
+    assert secrets.openai_api_key.get_secret_value() == "sk-nry-test-key"
+
+
 def test_provider_defaults_to_anthropic() -> None:
     provider = Config().provider
     assert (provider.name, provider.agent, provider.review) == (
@@ -124,7 +143,30 @@ def test_bedrock_provider_uses_bedrock_prices() -> None:
         ({**BEDROCK, "review_model": "anthropic.claude-opus-5-5"}, "not a Bedrock inference profile ID"),
         ({**BEDROCK, "aws_region": "us east 1"}, "not an AWS region"),
         ({"name": "anthropic", "aws_region": "us-east-1"}, "only to provider bedrock"),
-        ({"name": "openai"}, "name"),
+        ({"name": "openai"}, "needs base_url"),
+        (
+            {"name": "openai", "base_url": "http://router.test", "agent_model": "m", "review_model": "m"},
+            "HTTPS URL",
+        ),
+        (
+            {
+                "name": "openai",
+                "base_url": "https://user:pass@router.test/v1",
+                "agent_model": "m",
+                "review_model": "m",
+            },
+            "without embedded credentials",
+        ),
+        (
+            {
+                "name": "openai",
+                "base_url": "https://router.test/v1?key=secret",
+                "agent_model": "m",
+                "review_model": "m",
+            },
+            "query or fragment",
+        ),
+        ({"name": "openai", "base_url": "https://router.test/v1"}, "agent_model and review_model"),
     ],
 )
 def test_invalid_provider(provider: dict[str, object], message: str) -> None:

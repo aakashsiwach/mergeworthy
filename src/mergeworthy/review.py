@@ -254,3 +254,89 @@ class ClaudeReviewer:
             round(spend, 6),
             checked,
         )
+
+
+class OpenAIReviewer:
+    """Fail-closed self-review using an OpenAI-compatible chat-completions endpoint."""
+
+    def __init__(
+        self, *, model: str, api_key: str, base_url: str, prices: Prices | None = None, client: Any = None
+    ) -> None:
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.prices = prices if prices is not None else Config().active_prices
+        self._client = client
+
+    def review(self, request: ReviewRequest) -> ReviewResult:
+        rubric = load_rubric()
+        try:
+            prompt = build_review_prompt(request)
+        except ValueError as exc:
+            return error_result(str(exc), rubric.version, self.model)
+        if not self.api_key:
+            return error_result("NARAROUTER_API_KEY is not set", rubric.version, self.model)
+        import httpx
+
+        client = self._client or httpx.Client(timeout=60.0)
+        owns_client = self._client is None
+        try:
+            response = client.post(
+                self.base_url + "/chat/completions",
+                headers={"Authorization": "Bearer " + self.api_key},
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": rubric.text + "\nReturn only the required JSON object.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0,
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            message = payload["choices"][0]["message"]
+            if message.get("refusal"):
+                return error_result("the reviewer declined to review", rubric.version, self.model)
+            text = message.get("content") or ""
+            usage_data = payload.get("usage") or {}
+            usage = {
+                "input_tokens": int(usage_data.get("prompt_tokens", usage_data.get("input_tokens", 0)) or 0),
+                "output_tokens": int(
+                    usage_data.get("completion_tokens", usage_data.get("output_tokens", 0)) or 0
+                ),
+            }
+            served_by = payload.get("model") or self.model
+            cost = self.prices.cost(served_by, usage["input_tokens"], usage["output_tokens"])
+            checked = (
+                f"no price for {served_by}"
+                if cost is None
+                else self.prices.checked.isoformat()
+                if self.prices.checked
+                else "prices never checked"
+            )
+            try:
+                parsed = parse_review(text, rubric.version)
+            except MalformedReview as exc:
+                return error_result(f"malformed review: {exc}", rubric.version, served_by)
+            return ReviewResult(
+                parsed.verdict,
+                parsed.answers,
+                parsed.reasons,
+                rubric.version,
+                served_by,
+                usage,
+                round(cost or 0.0, 6),
+                checked,
+            )
+        except Exception as exc:
+            return error_result(
+                f"review call failed: {type(exc).__name__}: {exc}", rubric.version, self.model
+            )
+        finally:
+            if owns_client:
+                client.close()

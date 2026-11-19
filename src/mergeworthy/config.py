@@ -96,7 +96,8 @@ class Provider(_Model):
     ``AWS_BEARER_TOKEN_BEDROCK``, all from the environment.
     """
 
-    name: Literal["anthropic", "bedrock"] = "anthropic"
+    name: Literal["anthropic", "bedrock", "openai"] = "anthropic"
+    base_url: str | None = None
     aws_region: str | None = None
     agent_model: str | None = None
     review_model: str | None = None
@@ -124,6 +125,20 @@ class Provider(_Model):
                     )
         elif self.aws_region is not None:
             raise ValueError("aws_region applies only to provider bedrock")
+        if self.name == "openai":
+            from urllib.parse import urlparse
+
+            if self.base_url is None:
+                raise ValueError("provider openai needs base_url")
+            if not self.agent_model or not self.review_model:
+                raise ValueError("provider openai needs agent_model and review_model explicitly set")
+            parsed = urlparse(self.base_url or "")
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError("provider openai base_url must be an HTTPS URL without embedded credentials")
+            if parsed.query or parsed.fragment:
+                raise ValueError("provider openai base_url must not contain a query or fragment")
+        elif self.base_url is not None:
+            raise ValueError("base_url applies only to provider openai")
         return self
 
     @property
@@ -175,6 +190,7 @@ class ProviderPrices(_Model):
 
     anthropic: Prices = Field(default_factory=_anthropic_prices)
     bedrock: Prices = Field(default_factory=Prices)
+    openai: Prices = Field(default_factory=Prices)
 
 
 class Budget(_Model):
@@ -255,7 +271,11 @@ class Config(_Model):
     @property
     def active_prices(self) -> Prices:
         """The price list of the configured provider."""
-        return self.prices.bedrock if self.provider.name == "bedrock" else self.prices.anthropic
+        if self.provider.name == "bedrock":
+            return self.prices.bedrock
+        if self.provider.name == "openai":
+            return self.prices.openai
+        return self.prices.anthropic
 
     def is_denied(self, full_name: str) -> bool:
         return full_name.lower() in self.deny_list
@@ -266,6 +286,7 @@ class Secrets(_Model):
 
     github_token: SecretStr | None = None
     model_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
 
 
 def _walk(data: Mapping[str, Any], prefix: str = "") -> Iterator[tuple[str, str, Any]]:
@@ -333,4 +354,8 @@ def load_secrets(environ: Mapping[str, str] | None = None) -> Secrets:
         value = env.get(name, "").strip()
         return SecretStr(value) if value else None
 
-    return Secrets(github_token=get(GITHUB_TOKEN_ENV), model_api_key=get(MODEL_API_KEY_ENV))
+    return Secrets(
+        github_token=get(GITHUB_TOKEN_ENV),
+        model_api_key=get(MODEL_API_KEY_ENV),
+        openai_api_key=get("NARAROUTER_API_KEY"),
+    )

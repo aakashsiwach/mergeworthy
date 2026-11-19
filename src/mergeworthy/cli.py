@@ -35,7 +35,7 @@ from mergeworthy.gitops import Git, GitError
 from mergeworthy.ledger import AttemptState, Decision, Ledger, LedgerError
 from mergeworthy.provider import agent_environment
 from mergeworthy.recheck import AwaitingHumanDecision, NoLongerAvailable
-from mergeworthy.review import ClaudeReviewer, Reviewer
+from mergeworthy.review import ClaudeReviewer, OpenAIReviewer, Reviewer
 from mergeworthy.sandbox import SandboxError, docker_available
 from mergeworthy.scoreboard import write as write_scoreboard
 from mergeworthy.submit import GitHubWriter, SubmissionRefused, prepare_submission, render_plan, submit
@@ -226,7 +226,18 @@ def decide_command(
 
 
 def make_agent(config: Config) -> CodingAgent:
-    """The real coding agent. Imported lazily so read-only commands never load the SDK."""
+    """Build the selected coding agent without exposing credentials to the sandbox."""
+    secrets = load_secrets()
+    if config.provider.name == "openai":
+        from mergeworthy.agent.openai import OpenAICodingAgent
+
+        key = secrets.openai_api_key.get_secret_value() if secrets.openai_api_key else ""
+        return OpenAICodingAgent(
+            model=config.provider.agent,
+            api_key=key,
+            base_url=config.provider.base_url or "",
+            prices=config.active_prices,
+        )
     from mergeworthy.agent.claude import ClaudeCodingAgent
 
     env = agent_environment(config, os.environ)
@@ -234,6 +245,15 @@ def make_agent(config: Config) -> CodingAgent:
 
 
 def make_reviewer(config: Config) -> Reviewer:
+    if config.provider.name == "openai":
+        secrets = load_secrets()
+        key = secrets.openai_api_key.get_secret_value() if secrets.openai_api_key else ""
+        return OpenAIReviewer(
+            model=config.provider.review,
+            api_key=key,
+            base_url=config.provider.base_url or "",
+            prices=config.active_prices,
+        )
     return ClaudeReviewer(model=config.provider.review, prices=config.active_prices)
 
 

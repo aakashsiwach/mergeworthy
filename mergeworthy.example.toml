@@ -97,7 +97,7 @@ output_per_mtok = 10.0
 input_per_mtok = 0.1
 output_per_mtok = 0.5
 
-# Amazon Bedrock prices are set by AWS and are not filled in here. Copy them from the Amazon Bedrock pricing
+# OpenAI-compatible provider prices must be configured for the exact selected model before agent runs.\n# [prices.openai]\n# checked = 2026-11-19\n# [prices.openai.models."auto/bynara"]\n# input_per_mtok = 0.0\n# output_per_mtok = 0.0\n\n# Amazon Bedrock prices are set by AWS and are not filled in here. Copy them from the Amazon Bedrock pricing
 # page, keyed by the inference profile ID you use (regional profiles such as "us." cost more than "global."),
 # and set `checked` to the date you did. Until then spend shows "no price for <model>".
 [prices.bedrock]

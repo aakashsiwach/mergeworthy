@@ -128,6 +128,8 @@ class Provider(_Model):
         if self.name == "openai":
             from urllib.parse import urlparse
 
+            if self.base_url is None:
+                raise ValueError("provider openai needs base_url")
             if not self.agent_model or not self.review_model:
                 raise ValueError("provider openai needs agent_model and review_model explicitly set")
             parsed = urlparse(self.base_url or "")

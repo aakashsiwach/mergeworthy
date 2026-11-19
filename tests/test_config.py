@@ -135,6 +135,10 @@ def test_bedrock_provider_uses_bedrock_prices() -> None:
         ({**BEDROCK, "aws_region": "us east 1"}, "not an AWS region"),
         ({"name": "anthropic", "aws_region": "us-east-1"}, "only to provider bedrock"),
         ({"name": "openai"}, "needs base_url"),
+        ({"name": "openai", "base_url": "http://router.test", "agent_model": "m", "review_model": "m"}, "HTTPS URL"),
+        ({"name": "openai", "base_url": "https://user:pass@router.test/v1", "agent_model": "m", "review_model": "m"}, "without embedded credentials"),
+        ({"name": "openai", "base_url": "https://router.test/v1?key=secret", "agent_model": "m", "review_model": "m"}, "query or fragment"),
+        ({"name": "openai", "base_url": "https://router.test/v1"}, "agent_model and review_model"),
     ],
 )
 def test_invalid_provider(provider: dict[str, object], message: str) -> None:

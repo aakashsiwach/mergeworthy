@@ -231,7 +231,12 @@ def make_agent(config: Config) -> CodingAgent:
     if config.provider.name == "openai":
         from mergeworthy.agent.openai import OpenAICodingAgent
         key = secrets.openai_api_key.get_secret_value() if secrets.openai_api_key else ""
-        return OpenAICodingAgent(model=config.provider.agent, api_key=key, base_url=config.provider.base_url or "", prices=config.active_prices)
+        return OpenAICodingAgent(
+            model=config.provider.agent,
+            api_key=key,
+            base_url=config.provider.base_url or "",
+            prices=config.active_prices,
+        )
     from mergeworthy.agent.claude import ClaudeCodingAgent
     env = agent_environment(config, os.environ)
     return ClaudeCodingAgent(model=config.provider.agent, provider_env=env)
@@ -240,7 +245,12 @@ def make_reviewer(config: Config) -> Reviewer:
     if config.provider.name == "openai":
         secrets = load_secrets()
         key = secrets.openai_api_key.get_secret_value() if secrets.openai_api_key else ""
-        return OpenAIReviewer(model=config.provider.review, api_key=key, base_url=config.provider.base_url or "", prices=config.active_prices)
+        return OpenAIReviewer(
+            model=config.provider.review,
+            api_key=key,
+            base_url=config.provider.base_url or "",
+            prices=config.active_prices,
+        )
     return ClaudeReviewer(model=config.provider.review, prices=config.active_prices)
 
 def make_sandbox_factory() -> SandboxFactory:

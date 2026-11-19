@@ -24,7 +24,13 @@ AWS_CREDENTIAL_VARS = (
 )
 # Variables that would switch Claude Code to another provider.
 OTHER_PROVIDER_SWITCHES = ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_VERTEX")
-SECRET_VARS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "NARAROUTER_API_KEY")
+SECRET_VARS = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "NARAROUTER_API_KEY",
+)
 
 
 def agent_environment(config: Config, environ: Mapping[str, str]) -> dict[str, str]:

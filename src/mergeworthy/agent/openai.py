@@ -119,9 +119,25 @@ class OpenAICodingAgent:
                 response.raise_for_status()
                 payload = response.json()
                 message = payload["choices"][0]["message"]
-                usage = payload.get("usage") or {}
-                input_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
-                output_tokens = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+                usage = payload.get("usage")
+                input_tokens = usage.get("prompt_tokens", usage.get("input_tokens")) if usage else None
+                output_tokens = (
+                    usage.get("completion_tokens", usage.get("output_tokens")) if usage else None
+                )
+                if (
+                    not isinstance(input_tokens, int)
+                    or isinstance(input_tokens, bool)
+                    or input_tokens < 0
+                    or not isinstance(output_tokens, int)
+                    or isinstance(output_tokens, bool)
+                    or output_tokens < 0
+                ):
+                    return AttemptResult(
+                        AttemptStatus.FAILED,
+                        commands=records,
+                        spend_usd=round(spend, 6),
+                        error="API response is missing valid token usage; refusing untracked spend",
+                    )
                 cost = self.prices.cost(self.model, input_tokens, output_tokens)
                 if cost is None:
                     return AttemptResult(

@@ -3,7 +3,7 @@
 # Secrets never go in this file. mergeworthy refuses to start if it finds anything that looks like a token or
 # key here. Set them as environment variables instead:
 #   GITHUB_TOKEN        GitHub token, used only by submission after human approval
-#   ANTHROPIC_API_KEY   model API key, used only by the coding agent process
+#   ANTHROPIC_API_KEY   Claude API key (anthropic/bedrock modes)\n#   NARAROUTER_API_KEY OpenAI-compatible API key (openai mode)
 #
 # Every value below is the default. A missing file means these defaults. Unknown keys are an error.
 
@@ -65,14 +65,14 @@ max_minutes_per_attempt = 30
 
 # Where the models run. Credentials are never set here (see CONTRIBUTING.md).
 [provider]
-# "anthropic" (the Claude API, needs ANTHROPIC_API_KEY) or "bedrock" (Amazon Bedrock, needs AWS credentials).
+# "anthropic", "bedrock", or "openai" (OpenAI-compatible endpoints such as NaraRouter).
 name = "anthropic"
 # Bedrock only: the AWS region. Optional if your AWS profile or AWS_REGION already sets one.
 # aws_region = "us-east-1"
 # Model IDs for the coding agent and for self-review. Default for "anthropic": claude-opus-5-5. Required for
 # "bedrock": inference profile IDs such as "us.anthropic.claude-opus-5-5" (or inference profile ARNs).
 # agent_model = "claude-opus-5-5"
-# review_model = "claude-opus-5-5"
+# review_model = "claude-opus-5-5"\n# base_url = "https://router.bynara.id/v1"
 
 # The coding agent (Claude Agent SDK).
 [agent]

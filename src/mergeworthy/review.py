@@ -286,7 +286,10 @@ class OpenAIReviewer:
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": rubric.text + "\nReturn only the required JSON object."},
+                        {
+                            "role": "system",
+                            "content": rubric.text + "\nReturn only the required JSON object.",
+                        },
                         {"role": "user", "content": prompt},
                     ],
                     "response_format": {"type": "json_object"},
@@ -302,7 +305,9 @@ class OpenAIReviewer:
             usage_data = payload.get("usage") or {}
             usage = {
                 "input_tokens": int(usage_data.get("prompt_tokens", usage_data.get("input_tokens", 0)) or 0),
-                "output_tokens": int(usage_data.get("completion_tokens", usage_data.get("output_tokens", 0)) or 0),
+                "output_tokens": int(
+                    usage_data.get("completion_tokens", usage_data.get("output_tokens", 0)) or 0
+                ),
             }
             served_by = payload.get("model") or self.model
             cost = self.prices.cost(served_by, usage["input_tokens"], usage["output_tokens"])

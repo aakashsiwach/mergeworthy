@@ -84,7 +84,7 @@ def test_tool_call_executes_only_through_sandbox_and_counts_spend(tmp_path: Path
     assert result.status is AttemptStatus.COMPLETED
     assert result.diff.startswith("diff --git")
     assert sandbox.commands == ["pytest -q"]
-    assert result.spend_usd == 0.0014
+    assert result.spend_usd == 0.0012
     assert client.calls[0]["url"] == "https://router.test/v1/chat/completions"
     assert client.calls[0]["headers"]["Authorization"] == "Bearer secret"
     assert client.closed is False

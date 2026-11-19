@@ -81,6 +81,7 @@ class OpenAICodingAgent:
                 response = client.post(
                     f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"},
+                    timeout=min(self.timeout, remaining),
                     json={"model": self.model, "messages": messages, "tools": self._tools(),
                           "tool_choice": "auto", "temperature": 0.1},
                 )

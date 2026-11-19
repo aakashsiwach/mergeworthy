@@ -126,10 +126,13 @@ class Provider(_Model):
         elif self.aws_region is not None:
             raise ValueError("aws_region applies only to provider bedrock")
         if self.name == "openai":
-            if self.base_url is None:
-                raise ValueError("provider openai needs base_url")
-            if not self.base_url.startswith(("https://", "http://")):
-                raise ValueError("provider base_url must be an HTTP(S) URL")
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.base_url or "")
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError("provider openai base_url must be an HTTPS URL without embedded credentials")
+            if parsed.query or parsed.fragment:
+                raise ValueError("provider openai base_url must not contain a query or fragment")
         elif self.base_url is not None:
             raise ValueError("base_url applies only to provider openai")
         return self
@@ -347,4 +350,8 @@ def load_secrets(environ: Mapping[str, str] | None = None) -> Secrets:
         value = env.get(name, "").strip()
         return SecretStr(value) if value else None
 
-    return Secrets(github_token=get(GITHUB_TOKEN_ENV), model_api_key=get(MODEL_API_KEY_ENV), openai_api_key=get("NARAROUTER_API_KEY"))
+    return Secrets(
+        github_token=get(GITHUB_TOKEN_ENV),
+        model_api_key=get(MODEL_API_KEY_ENV),
+        openai_api_key=get("NARAROUTER_API_KEY"),
+    )

@@ -231,7 +231,7 @@ def make_agent(config: Config) -> CodingAgent:
     if config.provider.name == "openai":
         from mergeworthy.agent.openai import OpenAICodingAgent
         key = secrets.openai_api_key.get_secret_value() if secrets.openai_api_key else ""
-        return OpenAICodingAgent(model=config.provider.agent, api_key=key, base_url=config.provider.base_url or "")
+        return OpenAICodingAgent(model=config.provider.agent, api_key=key, base_url=config.provider.base_url or "", prices=config.active_prices)
     from mergeworthy.agent.claude import ClaudeCodingAgent
     env = agent_environment(config, os.environ)
     return ClaudeCodingAgent(model=config.provider.agent, provider_env=env)

@@ -128,6 +128,8 @@ class Provider(_Model):
         if self.name == "openai":
             from urllib.parse import urlparse
 
+            if not self.agent_model or not self.review_model:
+                raise ValueError("provider openai needs agent_model and review_model explicitly set")
             parsed = urlparse(self.base_url or "")
             if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
                 raise ValueError("provider openai base_url must be an HTTPS URL without embedded credentials")

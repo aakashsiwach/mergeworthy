@@ -286,7 +286,7 @@ class OpenAIReviewer:
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": rubric.text + "\\nReturn only the required JSON object."},
+                        {"role": "system", "content": rubric.text + "\nReturn only the required JSON object."},
                         {"role": "user", "content": prompt},
                     ],
                     "response_format": {"type": "json_object"},
